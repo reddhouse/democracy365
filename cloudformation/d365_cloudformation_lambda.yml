@@ -1,0 +1,134 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Democracy365 Lambda CloudFormation Template
+
+Outputs:
+  d365Function1Alias1ARN:
+    Description: Alias Arn for Function 1
+    Value: !Ref d365Alias1
+
+Parameters:
+  VPCStackNameParameter:
+    Type: String
+    Default: d365stack-vpc
+    Description: Enter the name of the stack that contains vpc resources
+
+  RDSStackNameParameter:
+    Type: String
+    Default: d365stack-rds
+    Description: Enter the name of the stack that contains rds resources
+
+Resources:
+  ## IAM
+  d365IAMLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      # Trust Policy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Lambda vpc access execution role
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        # Lambda eni management access
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess
+        # Lambda sqs queue access
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+      Policies:
+        - PolicyName: d365PolicyForLambdaRDSIAMConnection 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: rds-db:connect
+                Resource:
+                  !Join
+                    - ''
+                    - - 'arn:aws:rds-db:'
+                      - !Ref 'AWS::Region'
+                      - ':'
+                      - !Ref 'AWS::AccountId'
+                      - ':'
+                      - 'dbuser:'
+                      # Import RDS Proxy Resource ID from rds stack
+                      - Fn::ImportValue:
+                         !Sub '${RDSStackNameParameter}-d365RDSProxy1ResourceID'
+                      - '/*'
+
+  ## Lambda
+  d365Function1:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function1.zip
+        # Keeping here for reference. Comment out two S3 lines above if using property below.
+        # ZipFile: |
+        #   exports.handler = async function(event){
+        #       console.log("d365Event: ", JSON.stringify(event, null, 2))
+        #       const response = {
+        #         statusCode: 200,
+        #         body: JSON.stringify('Got Lambda?')
+        #       }
+        #       return response
+        #   };
+      Environment:
+        Variables:
+          REGION: us-east-1
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+          
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      # AWS X-Ray tracing configuration
+      # TracingConfig:
+      #   Mode: Active
+      # Need to setup SQS and DLQ
+      # DeadLetterConfig:
+      #   TargetArn: arn:aws:sqs:us-east-2:123456789012:dlq  
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Layer1:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - nodejs12.x
+      Content:
+        S3Bucket: democracy365private
+        S3Key: d365_function1_layer1.zip
+      Description: Layer1 for Function1
+      LayerName: function1-layer1
+  
+  d365Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function1
+      Description: v1
+
+  d365Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function1
+      FunctionVersion: !GetAtt d365Version1.Version
+      Name: BLUE
+

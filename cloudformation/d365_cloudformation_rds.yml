@@ -1,0 +1,131 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Democracy365 RDS CloudFormation Template
+
+Outputs:
+  d365DBEndpoint:
+    Description: DB Endpoint
+    Value: !GetAtt d365DBInstance1.Endpoint.Address
+
+  d365RDSProxy1Endpoint:
+    Description: RDS Proxy Endpoint
+    Value: !GetAtt d365RDSProxy1.Endpoint
+    Export:
+      Name: !Sub '${AWS::StackName}-d365RDSProxy1Endpoint'
+
+  d365RDSProxy1ResourceID:
+    Description: RDS Proxy ResourceID
+    # Grab ARN, split by colons, Resource ID is 7th item
+    Value: !Select [6, !Split [":", !GetAtt d365RDSProxy1.DBProxyArn]]
+    Export:
+      Name: !Sub '${AWS::StackName}-d365RDSProxy1ResourceID'
+
+Parameters:
+  VPCStackNameParameter:
+    Type: String
+    Default: d365stack-vpc
+    Description: Enter the name of the stack that contains vpc resources
+
+Resources:  
+  ## Database
+  d365RDSSecret:
+    Type: 'AWS::SecretsManager::Secret'
+    Properties:
+      Description: Dynamically generated secret password for db instance
+      GenerateSecretString:
+        # Secret stored in AWS Systems Manager Parameter Store.
+        SecretStringTemplate: '{"username": "{{resolve:ssm:d365_db_user:1}}"}'
+        GenerateStringKey: "password"
+        PasswordLength: '20'
+        ExcludeCharacters: '"@/\'
+
+  d365SecretRDSInstanceAttachment:
+    Type: 'AWS::SecretsManager::SecretTargetAttachment'
+    Properties:
+      SecretId: !Ref d365RDSSecret
+      TargetId: !Ref d365DBInstance1
+      TargetType: AWS::RDS::DBInstance
+
+  d365DBInstance1:
+    Type: AWS::RDS::DBInstance
+    # This dependency would be necessary if all resources were being created together, in single CF template
+    # DependsOn:
+    #   - d365GatewayAttachment
+    Properties:
+      DBName: "{{resolve:ssm:d365_db_name:1}}"
+      Engine: postgres
+      # Highest supported version compatible with RDS Proxy as of 11/2020.
+      EngineVersion: '11.5'
+      MultiAZ: 'false'
+      DBInstanceClass: db.t2.micro
+      DBSubnetGroupName:
+        Fn::ImportValue:
+          !Sub '${VPCStackNameParameter}-d365DBSubnetGroup'
+      # When you use IAM for the connection to a proxy, the underlying RDS DB instance should NOT have IAM enabled, as the proxy authenticates to the database using the user name and password credentials retrieved from Secrets Manager.
+      EnableIAMDatabaseAuthentication: 'false'
+      AllocatedStorage: '20'
+      # Secrets stored in AWS Secrets Manager.
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref d365RDSSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref d365RDSSecret, ':SecretString:password}}' ]]
+      VPCSecurityGroups:
+        - Fn::ImportValue:
+            !Sub '${VPCStackNameParameter}-d365DBSecurityGroup'
+
+  ## IAM
+  d365IAMRDSRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      # Trust Policy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: d365RDSProxyPolicyForSecretsManagerAccess 
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref d365RDSSecret
+
+  ## RDS Proxy
+  d365RDSProxy1:
+    Type: AWS::RDS::DBProxy
+    DependsOn:
+      - d365DBInstance1
+    Properties:
+      Auth:
+        - {AuthScheme: SECRETS, SecretArn: !Ref d365RDSSecret, IAMAuth: REQUIRED}
+      DBProxyName: d365RDSProxy1  
+      # Allow proxy to include detailed information about SQL statements in its logs in order to debug issues SQL behavior or proxy performance.
+      DebugLogging: 'true'
+      EngineFamily: POSTGRESQL
+      # The number of seconds that a connection to the proxy can be inactive before the proxy disconnects it. Default is 1,800 seconds (30 minutes). Constraints are 1 to 28,800.
+      IdleClientTimeout: '120'
+      RequireTLS: 'true'
+      RoleArn: !GetAtt d365IAMRDSRole.Arn
+      VpcSecurityGroupIds:
+        - Fn::ImportValue:
+            !Sub '${VPCStackNameParameter}-d365DBSecurityGroup'
+      VpcSubnetIds:
+        - Fn::ImportValue:
+            !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+        - Fn::ImportValue:
+            !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+
+  d365ProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref d365RDSProxy1
+      DBInstanceIdentifiers:
+        - !Ref d365DBInstance1
+      TargetGroupName: default
+      ConnectionPoolConfigurationInfo:
+        MaxConnectionsPercent: '100'
+        MaxIdleConnectionsPercent: '50'
+        ConnectionBorrowTimeout: '120'
+

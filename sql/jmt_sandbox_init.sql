@@ -53,6 +53,17 @@ create table sandbox.links (
   link_url text
 );
 
+create table sandbox.problem_votes (
+  problem_vote_id int generated always as identity primary key,
+  problem_id int references sandbox.problems (problem_id),
+  user_id int references sandbox.users (user_id),
+  user_is_verified boolean,
+  vote_ts timestamptz,
+  num_votes int,
+  is_reclaim boolean,
+  reclaim_was_forced boolean
+);
+
 -- *
 -- * Functions
 -- *

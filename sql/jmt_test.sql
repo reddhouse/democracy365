@@ -1,14 +1,16 @@
 begin;
 
-create table if not exists accounts (
+create schema sandbox;
+
+create table sandbox.accounts (
   id int generated always as identity,
   name text not null,
   balance DEC (15, 2) not null,
   primary key (id)
 );
 
-insert into accounts (name, balance)
-  values ('Bob', 10000), ('Alice', 10000), ('Alice2', 20000), ('Alice3', 30000), ('Alice4', 40000), ('Alice5', 50000)
+insert into sandbox.accounts (name, balance)
+  values ('Bob', 10000), ('Alice', 10000), ('John', 20000), ('Jane', 30000), ('Susan', 40000), ('Steve', 50000)
 returning
   *;
 
@@ -16,10 +18,10 @@ select
   id,
   balance
 from
-  accounts;
+  sandbox.accounts;
 
 update
-  accounts
+  sandbox.accounts
 set
   balance = balance + 1000
 where
@@ -31,7 +33,7 @@ select
   name,
   balance
 from
-  accounts
+  sandbox.accounts
 order by
   id asc;
 

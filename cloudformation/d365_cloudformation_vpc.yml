@@ -1,0 +1,255 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Democracy365 VPC CloudFormation Template
+
+Outputs:
+  d365NATIP:
+    Description: NAT IP address
+    Value: !GetAtt d365NAT.PublicIp
+
+  d365PrivateSubnet1:
+    Description: One of two private subnet IDs to use in d365stack-rds
+    Value: !Ref d365PrivateSubnet1
+    Export:
+      Name: !Sub '${AWS::StackName}-d365PrivateSubnet1'
+
+  d365PrivateSubnet2:
+    Description: Second of two private subnet IDs to use in d365stack-rds
+    Value: !Ref d365PrivateSubnet2
+    Export:
+      Name: !Sub '${AWS::StackName}-d365PrivateSubnet2'
+  
+  d365DBSubnetGroup:
+    Description: The DB subnet group ID to use in d365stack-rds
+    Value: !Ref d365DBSubnetGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-d365DBSubnetGroup'
+
+  d365DBSecurityGroup:
+    Description: The DB security group (ID) to use in d365stack-rds
+    Value: !Ref d365DBSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-d365DBSecurityGroup'
+
+  d365LambdaSecurityGroup:
+    Description: The Lambda security group (ID) to use in d365stack-lambda
+    Value: !Ref d365LambdaSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-d365LambdaSecurityGroup'
+
+Resources:
+  ## VPC
+  d365VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      InstanceTenancy: default
+
+  ## Internet Gateway
+  d365InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  d365GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref d365VPC
+      InternetGatewayId: !Ref d365InternetGateway
+
+  ## Subnets
+  # This subnet will open access to the internet by way of our internet gateway.
+  d365PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref d365VPC
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a
+
+  # Private subnet for our RDS instance. Our db server(s) will be able to connect to the internet for software updates using the NAT gateway, but the internet will not be able to establish connections to the database server(s).
+  d365PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref d365VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1a
+
+  # A second subnet is also required by RDS.
+  d365PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref d365VPC
+      CidrBlock: 10.0.2.0/24
+      # Different zone from first subnet.
+      AvailabilityZone: us-east-1b
+
+  d365DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB Subnet Group
+      SubnetIds:
+      - !Ref d365PrivateSubnet1
+      - !Ref d365PrivateSubnet2
+
+  ## Routing
+  d365PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref d365VPC
+  
+  d365SubnetPublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref d365PublicSubnet1
+      RouteTableId: !Ref d365PublicRouteTable
+
+  d365PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: d365GatewayAttachment
+    Properties:
+      RouteTableId: !Ref d365PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref d365InternetGateway
+
+  d365PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref d365VPC
+
+  d365SubnetPrivateRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref d365PrivateSubnet1
+      RouteTableId: !Ref d365PrivateRouteTable
+
+  d365SubnetPrivateRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref d365PrivateSubnet2
+      RouteTableId: !Ref d365PrivateRouteTable    
+
+  # Resources in the private subnet still need access to the internet for updates and to non AWS resources, etc.
+  d365PrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref d365PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      InstanceId: !Ref d365NAT
+
+  ## Security Groups
+  # See information about security group rules: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-security-groups.html#security-group-rules
+  d365NATSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: NAT Security Group
+      VpcId: !Ref d365VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          # Allow inbound SSH access (over the internet gateway) to the NAT instance from your home network.
+          FromPort: '22'
+          ToPort: '22'
+          # Secret stored in AWS Systems Manager Parameter Store.
+          CidrIp: "{{resolve:ssm:d365_ip_for_ssh:3}}"
+        - IpProtocol: tcp
+          # Allow inbound HTTPS traffic from servers in the private subnet.
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 10.0.1.0/24
+        - IpProtocol: tcp
+          # Allow inbound HTTP traffic from servers in the private subnet.
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 10.0.1.0/24
+      # Custom SecurityGroupEgress overrides default egress roles, which would normally allow open egress on all protocols & ports.
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          # Allow outbound HTTP access to the internet via internet gateway.
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          # Allow outbound HTTPS access to the internet via internet gateway.
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 0.0.0.0/0
+
+  # Split out here to avoid circular dependency with d365DBSecurityGroup
+  # Will use NAT instance as bastion host (jump box) to connect to postgres via ssh with port forwarding.
+  d365NATSecurityGroupIngress:
+   Type: 'AWS::EC2::SecurityGroupIngress'
+   Properties:
+      GroupId: !Ref d365NATSecurityGroup
+      IpProtocol: tcp
+      FromPort: '5432'
+      ToPort: '5432'
+      # Allow traffic FROM the instance(s) associated with the following security group (does not copy rules from the referenced group)
+      SourceSecurityGroupId: !Ref d365DBSecurityGroup
+
+  # Listing separately to avoid circular dependency in CF template.
+  d365NATSecurityGroupEgress:
+   Type: 'AWS::EC2::SecurityGroupEgress'
+   Properties:
+      GroupId: !Ref d365NATSecurityGroup
+      IpProtocol: tcp
+      FromPort: '5432'
+      ToPort: '5432'
+      # Allow traffic TO the instance(s) associated with the following security group (does not copy rules from the referenced group).
+      DestinationSecurityGroupId: !Ref d365DBSecurityGroup
+
+  d365DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DB Security Group
+      VpcId: !Ref d365VPC
+      # No custom SecurityGroupEgress definition == open egress on all protocols & ports.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '5432'
+          ToPort: '5432'
+          # Allow traffic FROM the instance(s) associated with the following security group (does not copy rules from the referenced group).
+          SourceSecurityGroupId: !Ref d365NATSecurityGroup
+        - IpProtocol: tcp
+          FromPort: '5432'
+          ToPort: '5432'
+          # Allow traffic FROM the instance(s) associated with the following security group (does not copy rules from the referenced group).
+          SourceSecurityGroupId: !Ref d365LambdaSecurityGroup
+  
+  # Self-refencing source group needed here to cover communication from RDS Proxy TO the DB Instance. Again, we define this separately from the main SG definition to avoid circular dependency.
+  d365DBSecurityGroupIngress:
+   Type: 'AWS::EC2::SecurityGroupIngress'
+   Properties:
+      GroupId: !Ref d365DBSecurityGroup
+      IpProtocol: tcp
+      FromPort: '5432'
+      ToPort: '5432'
+      SourceSecurityGroupId: !Ref d365DBSecurityGroup
+
+  d365LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Lambda Security Group
+      VpcId: !Ref d365VPC
+      # No custom SecurityGroupEgress definition == open egress on all protocols & ports. Ingress not applicable for lambda.
+
+  ## Network Address Translation
+  d365NAT:
+    DependsOn: d365GatewayAttachment  
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: jmt-ec2-access-key-us-east-1
+      # Typically, an EC2 instance must be the source or destination of any traffic it sends or receives. However, a NAT instance must be able to send and receive traffic when the source or destination is not itself. Therefore, we disable source/destination checks on the NAT instance.
+      SourceDestCheck: 'false'
+      # Copied and pasted ID from: https://aws.amazon.com/amazon-linux-ami/2018.03-release-notes/
+      ImageId: ami-0f498e123a72a0a36
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref d365NATSecurityGroup
+          AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          DeleteOnTermination: 'true'
+          SubnetId: !Ref d365PublicSubnet1
+      UserData:
+        !Base64
+          "Fn::Join":
+            - ''
+            - [ "#!/bin/bash\n", yum update -y && yum install -y yum-cron && chkconfig yum-cron on]
+  
