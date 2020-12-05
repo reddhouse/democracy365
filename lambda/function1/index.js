@@ -52,6 +52,9 @@ exports.handler = async (event) => {
     "body": formattedResult
   }
 
+  // Test SQS queue trigger...
+  if (event.Records) console.log(event.Records[0].body)
+
   return new Promise((resolve, reject) => {
     caughtError ? reject(caughtError) : resolve(response)
   })

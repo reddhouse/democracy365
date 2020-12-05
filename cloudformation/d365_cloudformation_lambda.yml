@@ -19,18 +19,67 @@ Parameters:
     Description: Enter the name of the stack that contains rds resources
 
 Resources:
+  ## SQS
+  d365SourceQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: 'true'
+      # With this setting for FIFO queues, during the deduplication interval, Amazon SQS treats messages that are sent with identical content as duplicates and delivers only one copy of the message.
+      ContentBasedDeduplication: 'true'
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt d365DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  d365DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: 'true'
+
+  d365IAMSQSPolicy1: 
+    Type: AWS::SQS::QueuePolicy
+    Properties: 
+      Queues: 
+        - !Ref d365SourceQueue
+      PolicyDocument: 
+        Statement: 
+          - Effect: Allow
+            Action: 
+              - SQS:SendMessage
+              - SQS:ReceiveMessage
+            Resource: !GetAtt d365SourceQueue.Arn
+            Principal:  
+              AWS:
+                - !Ref 'AWS::AccountId'
+  
+  d365IAMSQSPolicy2: 
+    Type: AWS::SQS::QueuePolicy
+    Properties: 
+      Queues: 
+        - !Ref d365DeadLetterQueue
+      PolicyDocument: 
+        Statement: 
+          - Effect: Allow
+            Action: 
+              - SQS:SendMessage
+              - SQS:ReceiveMessage
+            Resource: !GetAtt d365DeadLetterQueue.Arn
+            Principal:  
+              AWS:
+                - !Ref 'AWS::AccountId'
+  
   ## IAM
+  # Allow our lambda functions to do various things, including connect to RDS Proxy.
   d365IAMLambdaRole:
-    Type: 'AWS::IAM::Role'
+    Type: AWS::IAM::Role
     Properties:
       # Trust Policy
       AssumeRolePolicyDocument:
         Version: 2012-10-17
         Statement:
           - Effect: Allow
+            Action: sts:AssumeRole
             Principal:
               Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
       ManagedPolicyArns:
         # Lambda vpc access execution role
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
@@ -58,6 +107,54 @@ Resources:
                       - Fn::ImportValue:
                          !Sub '${RDSStackNameParameter}-d365RDSProxy1ResourceID'
                       - '/*'
+
+  # Allow API Gateway to send messages to SQS queue
+  d365IAMApiToQueueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # Trust Policy
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Principal:
+              Service:
+                - apigateway.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
+      Policies:
+        - PolicyName: d365PolicyForApiQueueConnection
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt d365SourceQueue.Arn
+
+  ## Api
+  # d365Api:
+  #   Type: AWS::ApiGatewayV2::Api
+  #   Properties: 
+  #     ApiKeySelectionExpression: String
+  #     BasePath: String
+  #     Body: Json
+  #     BodyS3Location: 
+  #       BodyS3Location
+  #     CorsConfiguration: 
+  #       Cors
+  #     CredentialsArn: String
+  #     Description: String
+  #     DisableExecuteApiEndpoint: Boolean
+  #     DisableSchemaValidation: Boolean
+  #     FailOnWarnings: Boolean
+  #     Name: String
+  #     ProtocolType: String
+  #     RouteKey: String
+  #     RouteSelectionExpression: String
+  #     Tags: Json
+  #     Target: String
+  #     Version: String
 
   ## Lambda
   d365Function1:
@@ -87,17 +184,16 @@ Resources:
           # Secrets stored in AWS Systems Manager Parameter Store.
           DB_USER: "{{resolve:ssm:d365_db_user:1}}"
           DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
-          
       Layers:
         - !Ref d365Layer1
       Role: !GetAtt d365IAMLambdaRole.Arn
       Runtime: nodejs12.x
-      # AWS X-Ray tracing configuration
+      # AWS X-Ray tracing configuration.
       # TracingConfig:
       #   Mode: Active
-      # Need to setup SQS and DLQ
+      # This DLQ config is for failed ASYNC invocations. In our setup, Lambda is polling our SQS queue and invoking our functions synchronously.
       # DeadLetterConfig:
-      #   TargetArn: arn:aws:sqs:us-east-2:123456789012:dlq  
+      #   TargetArn: !GetAtt MyDeadLetterQueue.Arn
       VpcConfig: 
         SecurityGroupIds: 
           - Fn::ImportValue:
@@ -107,7 +203,7 @@ Resources:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
           - Fn::ImportValue:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
-  
+
   d365Layer1:
     Type: AWS::Lambda::LayerVersion
     Properties:
@@ -131,4 +227,12 @@ Resources:
       FunctionName: !Ref d365Function1
       FunctionVersion: !GetAtt d365Version1.Version
       Name: BLUE
-
+  
+  # Make d365Function1 aware of events coming from our SQS queue.
+  d365EventSourceMapping: 
+    Type: AWS::Lambda::EventSourceMapping
+    Properties: 
+      # Min 1, Max 10 for SQS FIFO. Update this once lambda function can process events in batches.
+      BatchSize: '1'
+      EventSourceArn: !GetAtt d365SourceQueue.Arn
+      FunctionName: !Ref d365Function1
