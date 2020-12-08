@@ -7,6 +7,10 @@ Outputs:
     Description: Alias Arn for Function 1
     Value: !Ref d365Alias1
 
+  d365ApiEndpoint:
+    Description: Api Endpoint
+    Value: !GetAtt d365Api.ApiEndpoint
+
 Parameters:
   VPCStackNameParameter:
     Type: String
@@ -68,7 +72,6 @@ Resources:
                 - !Ref 'AWS::AccountId'
   
   ## IAM
-  # Allow our lambda functions to do various things, including connect to RDS Proxy.
   d365IAMLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -133,28 +136,57 @@ Resources:
                 Resource: !GetAtt d365SourceQueue.Arn
 
   ## Api
-  # d365Api:
-  #   Type: AWS::ApiGatewayV2::Api
-  #   Properties: 
-  #     ApiKeySelectionExpression: String
-  #     BasePath: String
-  #     Body: Json
-  #     BodyS3Location: 
-  #       BodyS3Location
-  #     CorsConfiguration: 
-  #       Cors
-  #     CredentialsArn: String
-  #     Description: String
-  #     DisableExecuteApiEndpoint: Boolean
-  #     DisableSchemaValidation: Boolean
-  #     FailOnWarnings: Boolean
-  #     Name: String
-  #     ProtocolType: String
-  #     RouteKey: String
-  #     RouteSelectionExpression: String
-  #     Tags: Json
-  #     Target: String
-  #     Version: String
+  d365Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-cors.html
+      # CorsConfiguration: Cors
+      # This property is part of quick create. It specifies the credentials required for the integration, if any. For a Lambda integration, three options are available. To specify an IAM Role for API Gateway to assume, use the role's Amazon Resource Name (ARN). To require that the caller's identity be passed through from the request, specify arn:aws:iam::*:user/*. To use resource-based permissions on supported AWS services, specify null. Currently, this property is not used for HTTP integrations. Supported only for HTTP APIs.
+      # CredentialsArn: String
+      # Specifies whether clients can invoke your API by using the default execute-api endpoint. By default, clients can invoke your API with the default https://{api_id}.execute-api.{region}.amazonaws.com endpoint. To require that clients use a custom domain name to invoke your API, disable the default endpoint.
+      # DisableExecuteApiEndpoint: Boolean
+      # Rollback the API creation when a warning is encountered
+      FailOnWarnings: 'true'
+      # This property is part of quick create. If you don't specify a routeKey, a default route of $default is created. The $default route acts as a catch-all for any request made to your API, for a particular stage. The $default route key can't be modified. You can add routes after creating the API, and you can update the route keys of additional routes. Supported only for HTTP APIs.
+      # RouteKey: String
+      Body:
+        openapi: "3.0.1"
+        info:
+          title: "d365TestApi"
+          version: "2020-12-07 14:00:00UTC"
+        paths:
+          /write:
+            post:
+              responses:
+                default:
+                  description: "Default response for POST /write"
+              x-amazon-apigateway-integration:
+                integrationSubtype: "SQS-SendMessage"
+                credentials: !GetAtt d365IAMApiToQueueRole.Arn
+                requestParameters:
+                  # Messages that belong to the same message group are always processed one by one, in a strict order relative to the message group.
+                  MessageGroupId: "1"
+                  # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-aws-services.html
+                  MessageBody: "$request.body"
+                  QueueUrl: !Ref d365SourceQueue
+                payloadFormatVersion: "1.0"
+                type: "aws_proxy"
+                connectionType: "INTERNET"
+                timeoutInMillis: 30000
+
+  d365ApiStage:
+    Type: 'AWS::ApiGatewayV2::Stage'
+    Properties:
+      StageName: dev
+      ApiId: !Ref d365Api
+      AutoDeploy: 'true'
+  
+  d365ApiDeployment:
+    Type: 'AWS::ApiGatewayV2::Deployment'
+    Properties:
+      Description: d365 Development Api Deployment
+      ApiId: !Ref d365Api
+      StageName: !Ref d365ApiStage
 
   ## Lambda
   d365Function1:
