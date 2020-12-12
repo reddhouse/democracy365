@@ -3,9 +3,9 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: Democracy365 Lambda CloudFormation Template
 
 Outputs:
-  d365Function1Alias1ARN:
-    Description: Alias Arn for Function 1
-    Value: !Ref d365Alias1
+  # d365Function1Alias1ARN:
+  #   Description: Alias Arn for Function 1
+  #   Value: !Ref d365Function1Alias1
 
   d365ApiEndpoint:
     Description: Api Endpoint
@@ -111,8 +111,8 @@ Resources:
                          !Sub '${RDSStackNameParameter}-d365RDSProxy1ResourceID'
                       - '/*'
 
-  # Allow API Gateway to send messages to SQS queue
-  d365IAMApiToQueueRole:
+  # Allow API Gateway to send messages to SQS, and invoke lambdas.
+  d365IAMApiGatewayRole:
     Type: AWS::IAM::Role
     Properties:
       # Trust Policy
@@ -134,6 +134,13 @@ Resources:
               - Effect: Allow
                 Action: sqs:SendMessage
                 Resource: !GetAtt d365SourceQueue.Arn
+        - PolicyName: d365PolicyForApiLambdaInvocation
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: '*'        
 
   ## Api
   d365Api:
@@ -155,6 +162,18 @@ Resources:
           title: "d365TestApi"
           version: "2020-12-07 14:00:00UTC"
         paths:
+          /read:
+            get:
+              responses:
+                default:
+                  description: "Default response for GET /read"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
+                payloadFormatVersion: "2.0"
+                type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function1Alias1}/invocations'
+                connectionType: "INTERNET"
           /write:
             post:
               responses:
@@ -162,7 +181,7 @@ Resources:
                   description: "Default response for POST /write"
               x-amazon-apigateway-integration:
                 integrationSubtype: "SQS-SendMessage"
-                credentials: !GetAtt d365IAMApiToQueueRole.Arn
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
                 requestParameters:
                   # Messages that belong to the same message group are always processed one by one, in a strict order relative to the message group.
                   MessageGroupId: "1"
@@ -189,6 +208,7 @@ Resources:
       StageName: !Ref d365ApiStage
 
   ## Lambda
+  # function1-read
   d365Function1:
     Type: AWS::Lambda::Function
     Properties:
@@ -217,7 +237,7 @@ Resources:
           DB_USER: "{{resolve:ssm:d365_db_user:1}}"
           DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
       Layers:
-        - !Ref d365Layer1
+        - !Ref d365Function1Layer1
       Role: !GetAtt d365IAMLambdaRole.Arn
       Runtime: nodejs12.x
       # AWS X-Ray tracing configuration.
@@ -236,7 +256,7 @@ Resources:
           - Fn::ImportValue:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
 
-  d365Layer1:
+  d365Function1Layer1:
     Type: AWS::Lambda::LayerVersion
     Properties:
       CompatibleRuntimes:
@@ -247,24 +267,86 @@ Resources:
       Description: Layer1 for Function1
       LayerName: function1-layer1
   
-  d365Version1:
+  d365Function1Version1:
     Type: AWS::Lambda::Version
     Properties:
       FunctionName: !Ref d365Function1
       Description: v1
 
-  d365Alias1:
+  d365Function1Alias1:
     Type: AWS::Lambda::Alias
     Properties:
       FunctionName: !Ref d365Function1
-      FunctionVersion: !GetAtt d365Version1.Version
-      Name: BLUE
+      FunctionVersion: !GetAtt d365Function1Version1.Version
+      Name: ALIAS1
+
+  # function2-write
+  d365Function2:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function2.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+      Layers:
+        - !Ref d365Function2Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      # AWS X-Ray tracing configuration.
+      # TracingConfig:
+      #   Mode: Active
+      # This DLQ config is for failed ASYNC invocations. In our setup, Lambda is polling our SQS queue and invoking our functions synchronously.
+      # DeadLetterConfig:
+      #   TargetArn: !GetAtt MyDeadLetterQueue.Arn
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+ 
+  d365Function2Layer1:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      CompatibleRuntimes:
+        - nodejs12.x
+      Content:
+        S3Bucket: democracy365private
+        S3Key: d365_function2_layer1.zip
+      Description: Layer1 for Function2
+      LayerName: function2-layer1
   
-  # Make d365Function1 aware of events coming from our SQS queue.
+  d365Function2Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function2
+      Description: v1
+
+  d365Function2Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function2
+      FunctionVersion: !GetAtt d365Function2Version1.Version
+      Name: ALIAS2
+  
+  # Make d365Function2 aware of events coming from our SQS queue.
   d365EventSourceMapping: 
     Type: AWS::Lambda::EventSourceMapping
     Properties: 
       # Min 1, Max 10 for SQS FIFO. Update this once lambda function can process events in batches.
       BatchSize: '1'
       EventSourceArn: !GetAtt d365SourceQueue.Arn
-      FunctionName: !Ref d365Function1
+      FunctionName: !Ref d365Function2Alias1

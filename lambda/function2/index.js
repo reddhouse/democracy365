@@ -26,7 +26,7 @@ exports.handler = async (event) => {
     }
   }
 
-  let queryString = 'select * from sandbox.accounts'
+  let queryString = 'update sandbox.accounts set balance = balance + 1000 where id = 3'
   let formattedResult
   let caughtError
 
@@ -50,6 +50,9 @@ exports.handler = async (event) => {
     "headers": { "Content-Type": "text/html" },
     "body": formattedResult
   }
+
+  // Test SQS queue trigger...
+  if (event.Records) console.log(event.Records[0].body)
 
   return new Promise((resolve, reject) => {
     caughtError ? reject(caughtError) : resolve(response)
