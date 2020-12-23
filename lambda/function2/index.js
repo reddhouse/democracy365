@@ -2,53 +2,56 @@ const AWS = require('aws-sdk')
 const { Client } = require('pg')
 const { promisify } = require('util')
 
+const { REGION, PROXY_HOST, DB_PORT, DB_USER, DB_NAME } = process.env
+let client
+
+const getRDSToken = () => {
+  const signer = new AWS.RDS.Signer({
+    region: REGION,
+    hostname: PROXY_HOST,
+    port: Number(DB_PORT),
+    username: DB_USER
+  })
+  return promisify(signer.getAuthToken).bind(signer)
+}
+
+const clientConfig = (rdsToken) => {
+  return {
+    host: PROXY_HOST,
+    database: DB_NAME,
+    port: DB_PORT,
+    user: DB_USER,
+    password: rdsToken,
+    ssl: true
+  }
+}
+
 exports.handler = async (event) => {
-  const { REGION, PROXY_HOST, DB_PORT, DB_USER, DB_NAME } = process.env
-
-  const createToken = () => {
-    const signer = new AWS.RDS.Signer({
-      region: REGION,
-      hostname: PROXY_HOST,
-      port: Number(DB_PORT),
-      username: DB_USER
-    })
-    return promisify(signer.getAuthToken).bind(signer)
-  }
-
-  let clientConfig = (token) => {
-    return {
-      host: PROXY_HOST,
-      database: DB_NAME,
-      port: DB_PORT,
-      user: DB_USER,
-      password: token,
-      ssl: true
-    }
-  }
-
-  let queryString = 'update sandbox.accounts set balance = balance + 1000 where id = 3'
-  let formattedResult
-  let caughtError
+  const queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
+  let result, caughtError
 
   try {
-    let token = await createToken()
-    let client = new Client(clientConfig(token))
-    await client.connect()
-    let result = await client.query(queryString)
-    formattedResult = JSON.stringify(result.rows)
-    await client.end()
+    // Establish database connection with attempted reuse of execution context.
+    if (typeof client === 'undefined') {
+      const rdsToken = await getRDSToken()
+      client = new Client(clientConfig(rdsToken))
+      await client.connect()
+    }
 
-  } catch (err) {
+    // Query database.
+    result = await client.query(queryString)
+
+  } catch (error) {
     caughtError = err
-    console.log('Bummer: ', err)
+    console.log('BUMMER: ', error)
   }
 
-  let response = {
+  const response = {
     "statusCode": 200,
     "statusDescription": "200 OK",
     "isBase64Encoded": false,
     "headers": { "Content-Type": "text/html" },
-    "body": formattedResult
+    "body": JSON.stringify(result.rows)
   }
 
   // Test SQS queue trigger...

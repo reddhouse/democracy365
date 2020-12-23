@@ -14,7 +14,7 @@ Outputs:
       Name: !Sub '${AWS::StackName}-d365RDSProxy1Endpoint'
 
   d365RDSProxy1ResourceID:
-    Description: RDS Proxy ResourceID
+    Description: RDS Proxy ResourceID to use in d365stack-api
     # Grab ARN, split by colons, Resource ID is 7th item
     Value: !Select [6, !Split [":", !GetAtt d365RDSProxy1.DBProxyArn]]
     Export:

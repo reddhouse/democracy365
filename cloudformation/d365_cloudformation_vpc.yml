@@ -8,31 +8,31 @@ Outputs:
     Value: !GetAtt d365NAT.PublicIp
 
   d365PrivateSubnet1:
-    Description: One of two private subnet IDs to use in d365stack-rds
+    Description: One of two private subnets to use in d365stack-rds
     Value: !Ref d365PrivateSubnet1
     Export:
       Name: !Sub '${AWS::StackName}-d365PrivateSubnet1'
 
   d365PrivateSubnet2:
-    Description: Second of two private subnet IDs to use in d365stack-rds
+    Description: Second of two private subnets to use in d365stack-rds
     Value: !Ref d365PrivateSubnet2
     Export:
       Name: !Sub '${AWS::StackName}-d365PrivateSubnet2'
   
   d365DBSubnetGroup:
-    Description: The DB subnet group ID to use in d365stack-rds
+    Description: The DB subnet group to use in d365stack-rds
     Value: !Ref d365DBSubnetGroup
     Export:
       Name: !Sub '${AWS::StackName}-d365DBSubnetGroup'
 
   d365DBSecurityGroup:
-    Description: The DB security group (ID) to use in d365stack-rds
+    Description: The DB security group to use in d365stack-rds
     Value: !Ref d365DBSecurityGroup
     Export:
       Name: !Sub '${AWS::StackName}-d365DBSecurityGroup'
 
   d365LambdaSecurityGroup:
-    Description: The Lambda security group (ID) to use in d365stack-lambda
+    Description: The Lambda security group (ID) to use in d365stack-api and d365stack-helpers
     Value: !Ref d365LambdaSecurityGroup
     Export:
       Name: !Sub '${AWS::StackName}-d365LambdaSecurityGroup'
@@ -149,15 +149,25 @@ Resources:
           # Secret stored in AWS Systems Manager Parameter Store.
           CidrIp: "{{resolve:ssm:d365_ip_for_ssh:3}}"
         - IpProtocol: tcp
-          # Allow inbound HTTPS traffic from servers in the private subnet.
+          # Allow inbound HTTPS traffic from servers in private subnet 1.
           FromPort: '443'
           ToPort: '443'
           CidrIp: 10.0.1.0/24
         - IpProtocol: tcp
-          # Allow inbound HTTP traffic from servers in the private subnet.
+          # Allow inbound HTTP traffic from servers in private subnet 1.
           FromPort: '80'
           ToPort: '80'
           CidrIp: 10.0.1.0/24
+        - IpProtocol: tcp
+          # Allow inbound HTTPS traffic from servers in private subnet 2.
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: 10.0.2.0/24
+        - IpProtocol: tcp
+          # Allow inbound HTTP traffic from servers in private subnet 2.
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 10.0.2.0/24  
       # Custom SecurityGroupEgress overrides default egress roles, which would normally allow open egress on all protocols & ports.
       SecurityGroupEgress:
         - IpProtocol: tcp

@@ -1,3 +1,6 @@
+# Temp files
+temp/
+
 # MacOS
 .DS_Store
 *.zip

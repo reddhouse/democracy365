@@ -1,12 +1,20 @@
 ---
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Democracy365 Lambda CloudFormation Template
+Description: Democracy365 Api CloudFormation Template
 
 Outputs:
-  # d365Function1Alias1ARN:
-  #   Description: Alias Arn for Function 1
-  #   Value: !Ref d365Function1Alias1
+  d365LambdaRoleArn:
+    Description: The Arn of the lambda IAM role to use in d365stack-helpers
+    Value: !GetAtt d365IAMLambdaRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-d365LambdaRoleArn'
 
+  d365KMSKeyId:
+    Description: The KMS Key (ID) to use in d365stack-helpers
+    Value: !Ref d365KMSKey
+    Export:
+      Name: !Sub '${AWS::StackName}-d365KMSKeyId'
+  
   d365ApiEndpoint:
     Description: Api Endpoint
     Value: !GetAtt d365Api.ApiEndpoint
@@ -71,13 +79,63 @@ Resources:
               AWS:
                 - !Ref 'AWS::AccountId'
   
+  ## KMS
+  d365KMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: CMK for token signing and verification during auth
+      KeySpec: RSA_2048
+      KeyUsage: SIGN_VERIFY
+      PendingWindowInDays: 7
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow access for Key Administrators
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:user/Administrator'
+            Action:
+              - kms:Create*
+              - kms:Describe*
+              - kms:Enable*
+              - kms:List*
+              - kms:Put*
+              - kms:Update*
+              - kms:Revoke*
+              - kms:Disable*
+              - kms:Get*
+              - kms:Delete*
+              - kms:TagResource
+              - kms:UntagResource
+              - kms:ScheduleKeyDeletion
+              - kms:CancelKeyDeletion
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS:
+                - !GetAtt d365IAMLambdaRole.Arn
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:user/Administrator'
+            Action:
+              - kms:DescribeKey
+              - kms:GetPublicKey
+              - kms:Sign
+              - kms:Verify
+            Resource: '*'
+  
   ## IAM
   d365IAMLambdaRole:
     Type: AWS::IAM::Role
     Properties:
       # Trust Policy
       AssumeRolePolicyDocument:
-        Version: 2012-10-17
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Action: sts:AssumeRole
@@ -110,6 +168,16 @@ Resources:
                       - Fn::ImportValue:
                          !Sub '${RDSStackNameParameter}-d365RDSProxy1ResourceID'
                       - '/*'
+        - PolicyName: d365PolicyForLambdaSESPermission
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                "Resource": '*'
+                
 
   # Allow API Gateway to send messages to SQS, and invoke lambdas.
   d365IAMApiGatewayRole:
@@ -117,7 +185,7 @@ Resources:
     Properties:
       # Trust Policy
       AssumeRolePolicyDocument:
-        Version: 2012-10-17
+        Version: '2012-10-17'
         Statement:
           - Effect: Allow
             Action: sts:AssumeRole
@@ -167,12 +235,38 @@ Resources:
               responses:
                 default:
                   description: "Default response for GET /read"
+              security:
+              - d365LambdaAuthorizer1: []    
               x-amazon-apigateway-integration:
                 credentials: !GetAtt d365IAMApiGatewayRole.Arn
                 payloadFormatVersion: "2.0"
                 type: "aws_proxy"
                 httpMethod: "POST"
                 uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function1Alias1}/invocations'
+                connectionType: "INTERNET"
+          /signin1:
+            post:
+              responses:
+                default:
+                  description: "Default response for POST /signin1"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
+                payloadFormatVersion: "2.0"
+                type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function4Alias1}/invocations'
+                connectionType: "INTERNET"
+          /signin2:
+            post:
+              responses:
+                default:
+                  description: "Default response for POST /signin2"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
+                payloadFormatVersion: "2.0"
+                type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function5Alias1}/invocations'
                 connectionType: "INTERNET"
           /write:
             post:
@@ -192,6 +286,21 @@ Resources:
                 type: "aws_proxy"
                 connectionType: "INTERNET"
                 timeoutInMillis: 30000
+        components:
+          securitySchemes:
+            d365LambdaAuthorizer1:
+              type: "apiKey"
+              name: "Authorization"
+              in: "header"
+              x-amazon-apigateway-authorizer:
+                identitySource: "$request.header.Authorization"
+                authorizerUri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function3Alias1}/invocations'
+                authorizerCredentials: !GetAtt d365IAMApiGatewayRole.Arn
+                authorizerPayloadFormatVersion: "2.0"
+                # Authorizer responses are being cached based on above identitySource: https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-lambda-authorizer.html#http-api-lambda-authorizer.caching
+                authorizerResultTtlInSeconds: 5
+                type: "request"
+                enableSimpleResponses: true
 
   d365ApiStage:
     Type: 'AWS::ApiGatewayV2::Stage'
@@ -208,7 +317,7 @@ Resources:
       StageName: !Ref d365ApiStage
 
   ## Lambda
-  # function1-read
+  # function1, read
   d365Function1:
     Type: AWS::Lambda::Function
     Properties:
@@ -237,15 +346,9 @@ Resources:
           DB_USER: "{{resolve:ssm:d365_db_user:1}}"
           DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
       Layers:
-        - !Ref d365Function1Layer1
+        - !Ref d365Layer1
       Role: !GetAtt d365IAMLambdaRole.Arn
       Runtime: nodejs12.x
-      # AWS X-Ray tracing configuration.
-      # TracingConfig:
-      #   Mode: Active
-      # This DLQ config is for failed ASYNC invocations. In our setup, Lambda is polling our SQS queue and invoking our functions synchronously.
-      # DeadLetterConfig:
-      #   TargetArn: !GetAtt MyDeadLetterQueue.Arn
       VpcConfig: 
         SecurityGroupIds: 
           - Fn::ImportValue:
@@ -256,16 +359,16 @@ Resources:
           - Fn::ImportValue:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
 
-  d365Function1Layer1:
+  d365Layer1:
     Type: AWS::Lambda::LayerVersion
     Properties:
       CompatibleRuntimes:
         - nodejs12.x
       Content:
         S3Bucket: democracy365private
-        S3Key: d365_function1_layer1.zip
-      Description: Layer1 for Function1
-      LayerName: function1-layer1
+        S3Key: d365_layer1.zip
+      Description: ONLY contains node-postgress (pg), for use in multiple functions
+      LayerName: layer1
   
   d365Function1Version1:
     Type: AWS::Lambda::Version
@@ -280,7 +383,7 @@ Resources:
       FunctionVersion: !GetAtt d365Function1Version1.Version
       Name: ALIAS1
 
-  # function2-write
+  # function2, write
   d365Function2:
     Type: AWS::Lambda::Function
     Properties:
@@ -299,7 +402,7 @@ Resources:
           DB_USER: "{{resolve:ssm:d365_db_user:1}}"
           DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
       Layers:
-        - !Ref d365Function2Layer1
+        - !Ref d365Layer1
       Role: !GetAtt d365IAMLambdaRole.Arn
       Runtime: nodejs12.x
       # AWS X-Ray tracing configuration.
@@ -317,17 +420,6 @@ Resources:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
           - Fn::ImportValue:
               !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
- 
-  d365Function2Layer1:
-    Type: AWS::Lambda::LayerVersion
-    Properties:
-      CompatibleRuntimes:
-        - nodejs12.x
-      Content:
-        S3Bucket: democracy365private
-        S3Key: d365_function2_layer1.zip
-      Description: Layer1 for Function2
-      LayerName: function2-layer1
   
   d365Function2Version1:
     Type: AWS::Lambda::Version
@@ -350,3 +442,142 @@ Resources:
       BatchSize: '1'
       EventSourceArn: !GetAtt d365SourceQueue.Arn
       FunctionName: !Ref d365Function2Alias1
+
+  # function3, lambda authorizer
+  d365Function3:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function3.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+          KMS_KEY_ID: !Ref d365KMSKey
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Function3Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function3
+      Description: v1
+
+  d365Function3Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function3
+      FunctionVersion: !GetAtt d365Function3Version1.Version
+      Name: ALIAS3
+
+  # function4, signin1
+  d365Function4:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function4.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+          TEST_EMAIL_ADDR: "{{resolve:ssm:d365_test_email_addr:1}}"
+          KMS_KEY_ID: !Ref d365KMSKey
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Function4Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function4
+      Description: v1
+
+  d365Function4Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function4
+      FunctionVersion: !GetAtt d365Function4Version1.Version
+      Name: ALIAS4
+
+  # function5, signin2
+  d365Function5:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function5.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+          KMS_KEY_ID: !Ref d365KMSKey
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Function5Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function5
+      Description: v1
+
+  d365Function5Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function5
+      FunctionVersion: !GetAtt d365Function5Version1.Version
+      Name: ALIAS5
