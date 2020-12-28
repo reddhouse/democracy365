@@ -104,8 +104,8 @@ Resources:
       # Allow proxy to include detailed information about SQL statements in its logs in order to debug issues SQL behavior or proxy performance.
       DebugLogging: 'true'
       EngineFamily: POSTGRESQL
-      # The number of seconds that a connection to the proxy can be inactive before the proxy disconnects it. Default is 1,800 seconds (30 minutes). Constraints are 1 to 28,800.
-      IdleClientTimeout: '120'
+      # The number of seconds that a connection to the proxy can be inactive before the proxy disconnects it. Default is 1,800 seconds (30 minutes). Constraints are 1 to 28,800. Do not make this value shorter than the amount of time your lambda execution context remains frozen/alive for reuse!
+      IdleClientTimeout: '1800'
       RequireTLS: 'true'
       RoleArn: !GetAtt d365IAMRDSRole.Arn
       VpcSecurityGroupIds:
