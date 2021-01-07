@@ -10,32 +10,25 @@ create table sandbox.accounts (
 );
 
 insert into sandbox.accounts (name, balance)
-  values ('Bob', 10000), ('Alice', 10000), ('John', 20000), ('Jane', 30000), ('Susan', 40000), ('Steve', 50000)
-returning
-  *;
+values ('Bob', 10000), ('Alice', 10000), ('John', 20000), ('Jane', 30000), ('Susan', 40000), ('Steve', 50000)
+returning *;
 
 select
   id,
   balance
-from
-  sandbox.accounts;
+from sandbox.accounts;
 
-update
-  sandbox.accounts
-set
-  balance = balance + 1000
-where
-  id = 3;
+update sandbox.accounts
+set balance = balance + 1000
+where id = 3;
 
 -- View changes from update
 select
   id,
   name,
   balance
-from
-  sandbox.accounts
-order by
-  id asc;
+from sandbox.accounts
+order by id asc;
 
 rollback;
 

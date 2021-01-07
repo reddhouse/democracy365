@@ -3,11 +3,10 @@ begin;
 
 create schema sandbox;
 
-create or replace function sandbox.numeric_serial ()
-  returns char (
-    6)
-  language plpgsql
-  as $func$
+create or replace function sandbox.numeric_serial()
+returns char(6)
+language plpgsql
+as $func$
 declare
   _serial char(6);
   _i int;
@@ -17,7 +16,7 @@ begin
   for _i in 1..6 loop
     _serial = _serial || substr(_chars, int4(floor(random() * length(_chars))) + 1, 1);
   end loop;
-  return lower(_serial);
+return lower(_serial);
 end
 $func$;
 
@@ -30,9 +29,8 @@ create table sandbox.users (
 );
 
 insert into sandbox.users (email_address)
-  values ('bob@email.com'), ('alice@email.com'), ('john@email.com'), ('jane@email.com'), ('susan@email.com'), ('steve@email.com')
-returning
-  *;
+values ('bob@email.com'), ('alice@email.com'), ('john@email.com'), ('jane@email.com'), ('susan@email.com'), ('steve@email.com')
+returning *;
 
 commit;
 

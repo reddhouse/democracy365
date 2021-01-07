@@ -1,20 +1,22 @@
 begin;
 
-create schema sandbox;
+create schema if not exists sandbox;
 
 -- *
 -- * Tables
 -- *
 
-create table sandbox.lorem (
+create table if not exists sandbox.lorem (
   word text
 );
 
-create table sandbox.users (
+create table if not exists sandbox.users (
   user_id int generated always as identity primary key,
   -- Default one token for each day that has elapsed since "go-live" date.
   num_d365_tokens int default (current_date - date '2020-01-01'),
   email_address citext not null unique,
+  signin_code char(6) unique,
+  signout_ts timestamptz,
   non_verified_mailing_address text,
   verified_mailing_address text,
   verification_code_requested_on timestamptz,
@@ -25,7 +27,7 @@ create table sandbox.users (
   account_updates smallint
 );
 
-create table sandbox.problems (
+create table if not exists sandbox.problems (
   problem_id int generated always as identity primary key,
   per_year_id int,
   date_created timestamptz,
@@ -34,7 +36,7 @@ create table sandbox.problems (
   problem_tags text[]
 );
 
-create table sandbox.solutions (
+create table if not exists sandbox.solutions (
   solution_id int generated always as identity primary key,
   problem_id int references sandbox.problems (problem_id),
   per_problem_id int,
@@ -45,7 +47,7 @@ create table sandbox.solutions (
   no_sql jsonb
 );
 
-create table sandbox.links (
+create table if not exists sandbox.links (
   link_id int generated always as identity primary key,
   problem_id int references sandbox.problems (problem_id),
   solution_id int references sandbox.solutions (solution_id),
@@ -53,7 +55,7 @@ create table sandbox.links (
   link_url text
 );
 
-create table sandbox.problem_votes (
+create table if not exists sandbox.problem_votes (
   problem_vote_id int generated always as identity primary key,
   problem_id int references sandbox.problems (problem_id),
   user_id int references sandbox.users (user_id),
@@ -70,48 +72,54 @@ create table sandbox.problem_votes (
 
 create or replace function sandbox.random(a int, b int)
 -- Returns a random number within provided range.
-  returns int volatile
-  language sql
-  as $func$
-  select
-    a + ((b - a) * random())::int;
-
+returns int
+language sql
+as $func$
+  select a + ((b - a) * random())::int;
 $func$;
 
 create or replace function sandbox.random(a timestamptz, b timestamptz)
 -- Overload sandbox.random
 -- Returns a timestamp within provided range.
-  returns timestamptz volatile
-  language sql
-  as $func$
+returns timestamptz
+language sql
+as $func$
   select
     a + sandbox.random(0, extract(epoch from (b - a))::int) * interval '1 sec';
-
 $func$;
 
-create or replace function sandbox.make_lorem (len int)
-  returns text volatile
-  language sql
-  as $func$
-  with words (
-    w
-) as (
-    select
-      word
-    from
-      sandbox.lorem
-    order by
-      random()
+create or replace function sandbox.make_lorem(len int)
+returns text
+language sql
+as $func$
+  with words(w) as 
+  (
+    select word
+    from sandbox.lorem
+    order by random()
     limit len
-)
-select
-  string_agg(w, ' ')
-from
-  words;
-
+  )
+  select string_agg(w, ' ')
+  from words;
 $func$;
 
-create or replace function sandbox.count_problems_in_year (year int, out num_problems int)
+create or replace function sandbox.make_numeric_serial()
+returns char(6)
+language plpgsql
+as $func$
+declare
+  serial_string char(6) = '';
+  i int;
+  char_pool char(10) = '0123456789';
+begin
+  for i in 1..6 loop
+    serial_string = serial_string || substr(char_pool, int4(floor(random() * length(char_pool))) + 1, 1);
+  end loop;
+return lower(serial_string);
+end;
+$func$;
+
+create or replace function sandbox.count_problems_in_year(year int, out num_problems int)
 language plpgsql
 as $func$
 begin
@@ -121,10 +129,10 @@ begin
     sandbox.problems
   where
     extract(year from date_created)::int = year;
-end
+end;
 $func$;
 
-create or replace function sandbox.count_solutions_in_problem (p_id int, out num_solutions int)
+create or replace function sandbox.count_solutions_in_problem(p_id int, out num_solutions int)
 language plpgsql
 as $func$
 begin
@@ -134,21 +142,19 @@ begin
     sandbox.solutions
   where
     problem_id = p_id;
-end
+end;
 $func$;
 
 -- *
 -- * Procedures
 -- *
 
-create or replace procedure sandbox.insert_lorem_text ()
+create or replace procedure sandbox.insert_lorem_text()
 language plpgsql
 as $proc$
 begin
-  with w (
-    word
-    -- Temporary table 'w', with 'word' column.
-) as (
+  -- Temporary table 'w', with 'word' column.
+  with w(word) as (
     -- Fill word column with lorem ipsum.
     select
       regexp_split_to_table('Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.', '[\s., ]')
@@ -158,48 +164,65 @@ begin
     union
     select
       regexp_split_to_table('At vero eos et accusamus et iusto odio dignissimos ducimus qui blanditiis praesentium voluptatum deleniti atque corrupti quos dolores et quas molestias excepturi sint occaecati cupiditate non provident, similique sunt in culpa qui officia deserunt mollitia animi, id est laborum et dolorum fuga. Et harum quidem rerum facilis est et expedita distinctio. Nam libero tempore, cum soluta nobis est eligendi optio cumque nihil impedit quo minus id quod maxime placeat facere possimus, omnis voluptas assumenda est, omnis dolor repellendus. Temporibus autem quibusdam et aut officiis debitis aut rerum necessitatibus saepe eveniet ut et voluptates repudiandae sint et molestiae non recusandae. Itaque earum rerum hic tenetur a sapiente delectus, ut aut reiciendis voluptatibus maiores alias consequatur aut perferendis doloribus asperiores repellat.', '[\s., ]')
-)
--- Copy data from temporary table to permanent one, with some conditions.
-insert into sandbox.lorem (word)
-select
-  lower(word)
-from
-  w
-where
-  word is not null
-  and word <> '';
+  )
+  -- Copy data from temporary table to permanent one, with some conditions.
+  insert into sandbox.lorem(word)
+  select lower(word)
+  from w
+  where
+    word is not null
+    and word <> '';
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_new_user (email_address text)
+create or replace procedure sandbox.insert_new_user(email_address text)
 language plpgsql
 as $proc$
+declare
+  new_code char(6) := sandbox.make_numeric_serial();
+  ts_now timestamptz := now();
 begin
-  insert into sandbox.users (email_address, is_verified, account_updates)
-    values (email_address, 'false', 0);
+  insert into sandbox.users(email_address, signin_code, signout_ts, is_verified, account_updates)
+  values (email_address, new_code, ts_now, 'false', 0);
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_dummy_users (num_users int)
+create or replace procedure sandbox.insert_dummy_users(num_users int)
 language plpgsql
 as $proc$
 begin
-  insert into sandbox.users (email_address, verification_code_requested_on, verification_code_expiration, verification_code, is_verified, account_updates)
+  insert into sandbox.users(email_address, signin_code, signout_ts, verification_code_requested_on, verification_code_expiration, verification_code, is_verified, account_updates)
   select
-    concat(sandbox.make_lorem (1), '@', sandbox.make_lorem (1), '.com') as email_address,
+    concat(sandbox.make_lorem(1), '@', sandbox.make_lorem(1), '.com') as email_address,
+    sandbox.make_numeric_serial() as signin_code,
+    now() as signout_ts,
     sandbox.random(now() - interval '3 months', now()) as verification_code_requested_on,
     sandbox.random(now(), now() + interval '12 months') as verification_code_expiration,
-    substring(MD5(random()::text)
-    from 1 for 8) as verification_code,
+    substring(MD5(random()::text) from 1 for 8) as verification_code,
     not (sandbox.random(0, 1) = 0) as is_verified,
     sandbox.random(0, 1) as account_updates
   from
-  -- Optional table alias t(x) could theoretically refer to t.x in body of "loop" above if needed.
-  generate_series(1, num_users) as t (x);
+  -- Optional table alias, t(x), allows you to theoretically refer to t.x in body of "loop" above if needed.
+  generate_series(1, num_users) as t(x);
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_problem (problem_title text, problem_description text, problem_tags text[])
+create or replace procedure sandbox.signout_user(u_id int)
+language plpgsql
+as $proc$
+declare
+  new_code char(6) := sandbox.make_numeric_serial();
+  ts_now timestamptz := now();
+begin
+  update sandbox.users
+  set
+    signin_code = new_code,
+    signout_ts = ts_now
+  where user_id = u_id;
+end;
+$proc$;
+
+create or replace procedure sandbox.insert_problem(problem_title text, problem_description text, problem_tags text[])
 language plpgsql
 as $proc$
 declare
@@ -207,12 +230,12 @@ declare
   ts_year int := extract(year from ts_now)::int;
   problem_count int := sandbox.count_problems_in_year (ts_year) + 1;
 begin
-  insert into sandbox.problems (per_year_id, date_created, problem_title, problem_description, problem_tags)
-    values (problem_count, ts_now, problem_title, problem_description, problem_tags);
+  insert into sandbox.problems(per_year_id, date_created, problem_title, problem_description, problem_tags)
+  values (problem_count, ts_now, problem_title, problem_description, problem_tags);
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_dummy_problems (num_problems int)
+create or replace procedure sandbox.insert_dummy_problems(num_problems int)
 language plpgsql
 as $proc$
 declare
@@ -229,32 +252,29 @@ begin
     ts_year := extract(year from random_ts)::int;
     problem_title := sandbox.make_lorem (sandbox.random(7, 15));
     -- Capitalize first letter of tile string.
-    problem_title_pretty := overlay(problem_title placing initcap(substring(problem_title from 1 for 2))
-      from 1 for 2);
+    problem_title_pretty := overlay(problem_title placing initcap(substring(problem_title from 1 for 2)) from 1 for 2);
     problem_description := sandbox.make_lorem (sandbox.random(25, 50));
     -- Capitalize first letter of description string.
-    problem_description_pretty := overlay(problem_description placing initcap(substring(problem_description from 1 for 2))
-      from 1 for 2);
+    problem_description_pretty := overlay(problem_description placing initcap(substring(problem_description from 1 for 2)) from 1 for 2);
     problem_tags := (
-      select
-        array_agg(sandbox.make_lorem (1))
-      from
-        generate_series(1, sandbox.random(1, 4)));
-    insert into sandbox.problems (per_year_id, date_created, problem_title, problem_description, problem_tags)
-      values (sandbox.count_problems_in_year (ts_year) + 1, random_ts, problem_title_pretty, problem_description_pretty, problem_tags);
+      select array_agg(sandbox.make_lorem(1))
+      from generate_series(1, sandbox.random(1, 4))
+    );
+    insert into sandbox.problems(per_year_id, date_created, problem_title, problem_description, problem_tags)
+    values (sandbox.count_problems_in_year (ts_year) + 1, random_ts, problem_title_pretty, problem_description_pretty, problem_tags);
   end loop;
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_solution (problem_id int, solution_title text, solution_description text, solution_tags text[])
+create or replace procedure sandbox.insert_solution(problem_id int, solution_title text, solution_description text, solution_tags text[])
 language plpgsql
 as $proc$
 declare
   ts_now timestamptz := now();
-  solution_count int := sandbox.count_solutions_in_problem (problem_id) + 1;
+  solution_count int := sandbox.count_solutions_in_problem(problem_id) + 1;
 begin
-  insert into sandbox.solutions (problem_id, per_problem_id, date_created, solution_title, solution_description, solution_tags)
-    values (problem_id, solution_count, ts_now, solution_title, solution_description, solution_tags);
+  insert into sandbox.solutions(problem_id, per_problem_id, date_created, solution_title, solution_description, solution_tags)
+  values (problem_id, solution_count, ts_now, solution_title, solution_description, solution_tags);
 end;
 $proc$;
 
@@ -272,59 +292,58 @@ declare
   solution_tags text[];
 begin
   for p in
-  select
-    problem_id,
-    date_created
-  from
-    sandbox.problems loop
-      -- Prevent solutions from existing before the problem was created.
-      age_limit_ts := p.date_created;
-      for counter in 1..sandbox.random(1, max_solutions_per_problem)
-      loop
-        random_ts := sandbox.random(age_limit_ts, now());
-        -- Make the next solution newer than the one just entered.
-        age_limit_ts := random_ts;
-        solution_title := sandbox.make_lorem (sandbox.random(7, 15));
-        -- Capitalize first letter of tile string.
-        solution_title_pretty := overlay(solution_title placing initcap(substring(solution_title from 1 for 2))
-          from 1 for 2);
-        solution_description := sandbox.make_lorem (sandbox.random(25, 50));
-        -- Capitalize first letter of description string.
-        solution_description_pretty := overlay(solution_description placing initcap(substring(solution_description from 1 for 2))
-          from 1 for 2);
-        solution_tags := (
-          select
-            array_agg(sandbox.make_lorem (1))
-          from
-            generate_series(1, sandbox.random(1, 4)));
-        insert into sandbox.solutions (problem_id, per_problem_id, date_created, solution_title, solution_description, solution_tags)
-          values (p.problem_id, sandbox.count_solutions_in_problem (p.problem_id) + 1, random_ts, solution_title_pretty, solution_description_pretty, solution_tags);
-      end loop;
+    select
+      problem_id,
+      date_created
+    from sandbox.problems 
+  loop
+    -- Prevent solutions from existing before the problem was created.
+    age_limit_ts := p.date_created;
+    for counter in 1..sandbox.random(1, max_solutions_per_problem) 
+    loop
+      random_ts := sandbox.random(age_limit_ts, now());
+      -- Make the next solution newer than the one just entered.
+      age_limit_ts := random_ts;
+      solution_title := sandbox.make_lorem (sandbox.random(7, 15));
+      -- Capitalize first letter of tile string.
+      solution_title_pretty := overlay(solution_title placing initcap(substring(solution_title from 1 for 2)) from 1 for 2);
+      solution_description := sandbox.make_lorem (sandbox.random(25, 50));
+      -- Capitalize first letter of description string.
+      solution_description_pretty := overlay(solution_description placing initcap(substring(solution_description from 1 for 2)) from 1 for 2);
+      solution_tags := (
+        select
+          array_agg(sandbox.make_lorem (1))
+        from
+          generate_series(1, sandbox.random(1, 4))
+      );
+      insert into sandbox.solutions(problem_id, per_problem_id, date_created, solution_title, solution_description, solution_tags)
+      values (p.problem_id, sandbox.count_solutions_in_problem (p.problem_id) + 1, random_ts, solution_title_pretty, solution_description_pretty, solution_tags);
     end loop;
+  end loop;
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_problem_link (problem_id int, link_title text, link_url text)
+create or replace procedure sandbox.insert_problem_link(problem_id int, link_title text, link_url text)
 language plpgsql
 as $proc$
 begin
   -- Omit solution_id intentionally to create null value.
-  insert into sandbox.links (problem_id, link_title, link_url)
-    values (problem_id, link_title, link_url);
+  insert into sandbox.links(problem_id, link_title, link_url)
+  values (problem_id, link_title, link_url);
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_solution_link (solution_id int, link_title text, link_url text)
+create or replace procedure sandbox.insert_solution_link(solution_id int, link_title text, link_url text)
 language plpgsql
 as $proc$
 begin
   -- Omit problem_id intentionally to create null value.
-  insert into sandbox.links (solution_id, link_title, link_url)
-    values (solution_id, link_title, link_url);
+  insert into sandbox.links(solution_id, link_title, link_url)
+  values (solution_id, link_title, link_url);
 end;
 $proc$;
 
-create or replace procedure sandbox.insert_dummy_links ()
+create or replace procedure sandbox.insert_dummy_links()
 language plpgsql
 as $proc$
 declare
@@ -333,32 +352,30 @@ declare
 begin
   -- Loop through problems, add 1, 2, or 3 links at random.
   for p in
-  select
-    problem_id
-  from
-    sandbox.problems loop
-      insert into sandbox.links (problem_id, link_title, link_url)
-      select
-        p.problem_id as problem_id,
-        sandbox.make_lorem (sandbox.random(3, 6)) as link_title,
-      concat('https://', sandbox.make_lorem (1), sandbox.make_lorem (1), '.com', '/', sandbox.make_lorem (1)) as link_url
-from
-  generate_series(1, sandbox.random(1, 3));
-    end loop;
+    select problem_id
+    from sandbox.problems
+  loop
+    insert into sandbox.links(problem_id, link_title, link_url)
+    select
+      p.problem_id as problem_id,
+      sandbox.make_lorem(sandbox.random(3, 6)) as link_title, 
+      concat('https://', sandbox.make_lorem(1), sandbox.make_lorem(1), '.com', '/', sandbox.make_lorem(1)) as link_url
+    from generate_series(1, sandbox.random(1, 3));
+  end loop;
+
   -- Loop through solutions, add 1, 2, or 3 links at random.
   for s in
-  select
-    solution_id
-  from
-    sandbox.solutions loop
-      insert into sandbox.links (solution_id, link_title, link_url)
-      select
-        s.solution_id as solution_id,
-        sandbox.make_lorem (sandbox.random(3, 6)) as link_title,
-      concat('https://', sandbox.make_lorem (1), '.com', '/', sandbox.make_lorem (1), '/', sandbox.make_lorem (1)) as link_url
-from
-  generate_series(1, sandbox.random(1, 3));
-    end loop;
+    select solution_id
+    from sandbox.solutions 
+  loop
+    insert into sandbox.links(solution_id, link_title, link_url)
+    select
+      s.solution_id as solution_id,
+      sandbox.make_lorem(sandbox.random(3, 6)) as link_title,
+      concat('https://', sandbox.make_lorem(1), '.com', '/', sandbox.make_lorem(1), '/', sandbox.make_lorem(1)) as link_url
+    from
+      generate_series(1, sandbox.random(1, 3));
+  end loop;
 end;
 $proc$;
 
@@ -366,50 +383,44 @@ $proc$;
 -- * Sandbox
 -- *
 
-call sandbox.insert_lorem_text ();
+call sandbox.insert_lorem_text();
 
 -- Users
-call sandbox.insert_dummy_users (5);
+call sandbox.insert_dummy_users(5);
 
-call sandbox.insert_new_user ('somebody@email.com');
+call sandbox.insert_new_user(email_address := 'somebody@email.com');
+
+call sandbox.signout_user(6);
 
 -- Problems
-call sandbox.insert_dummy_problems (4);
+call sandbox.insert_dummy_problems(4);
 
-call sandbox.insert_problem ('This is a problem title', 'This is a description of a problem with no length limit?', '{"single", "word", "tags", "go", "here with spaces?"}');
+call sandbox.insert_problem(problem_title := 'This is a problem title', problem_description := 'This is a description of a problem with no length limit?', problem_tags := '{"single", "word", "tags", "go", "here with spaces?"}');
 
 -- Solutions
-call sandbox.insert_dummy_solutions (max_solutions_per_problem := 3);
+call sandbox.insert_dummy_solutions(max_solutions_per_problem := 3);
 
-call sandbox.insert_solution (problem_id := 1, solution_title := 'This is a solution title', solution_description := 'This is a description of a solution with no length limit?', solution_tags := '{"single", "word", "tags", "go", "here with spaces?"}');
+call sandbox.insert_solution(problem_id := 1, solution_title := 'This is a solution title', solution_description := 'This is a description of a solution with no length limit?', solution_tags := '{"single", "word", "tags", "go", "here with spaces?"}');
 
 -- Links
-call sandbox.insert_dummy_links ();
+call sandbox.insert_dummy_links();
 
-call sandbox.insert_problem_link (problem_id := 1, link_title := 'great article with more info on foobar', link_url := 'https://google.com');
+call sandbox.insert_problem_link(problem_id := 1, link_title := 'great article with more info on foobar', link_url := 'https://google.com');
 
-call sandbox.insert_solution_link (solution_id := 1, link_title := 'great article with more info on barfoo', link_url := 'https://google.com');
+call sandbox.insert_solution_link(solution_id := 1, link_title := 'great article with more info on barfoo', link_url := 'https://google.com');
 
 -- Display
-select
-  *
-from
-  sandbox.users;
+select *
+from sandbox.users;
 
-select
-  *
-from
-  sandbox.problems;
+select *
+from sandbox.problems;
 
-select
-  *
-from
-  sandbox.solutions;
+select *
+from sandbox.solutions;
 
-select
-  *
-from
-  sandbox.links;
+select *
+from sandbox.links;
 
 -- Commit or Rollback
 rollback;
