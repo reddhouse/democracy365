@@ -19,7 +19,6 @@ create table if not exists sandbox.users (
   verification_code_expiration timestamptz,
   verification_code text,
   is_verified boolean default 'false',
-  forced_reclaim_in_progress boolean default 'false',
   account_updates smallint default 0,
   no_sql jsonb
 );
@@ -400,5 +399,5 @@ select *
 from sandbox.links;
 
 -- Commit or Rollback
-rollback;
+commit;
 
