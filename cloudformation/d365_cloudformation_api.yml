@@ -36,11 +36,15 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       FifoQueue: 'true'
-      # With this setting for FIFO queues, during the deduplication interval, Amazon SQS treats messages that are sent with identical content as duplicates and delivers only one copy of the message.
+      # With this setting for FIFO queues, during the deduplication interval, Amazon SQS treats messages that are sent with identical content as duplicates and delivers only one copy of the message. Amazon SQS will use a SHA-256 hash to generate the message deduplication ID (a message attribute) using the body of the message—but not the attributes of the message.
       ContentBasedDeduplication: 'true'
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt d365DeadLetterQueue.Arn
-        maxReceiveCount: 3
+        maxReceiveCount: 1
+      # From SQS docs: The length of time during which a message will be unavailable after a message is delivered from the queue. This blocks other components from receiving the same message and gives the initial component (lambda in our case) time to process and delete the message from the queue.
+      # From Lambda docs: To allow your function time to process each batch of records, set the source queue's visibility timeout to at least 6 times the timeout that you configure on your function. The extra time allows for Lambda to retry if your function execution is throttled while your function is processing a previous batch.
+      # https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+      VisibilityTimeout: 18
 
   d365DeadLetterQueue:
     Type: AWS::SQS::Queue
@@ -278,7 +282,7 @@ Resources:
                 credentials: !GetAtt d365IAMApiGatewayRole.Arn
                 requestParameters:
                   # Messages that belong to the same message group are always processed one by one, in a strict order relative to the message group.
-                  MessageGroupId: "1"
+                  MessageGroupId: "$request.body.MessageGroupId"
                   # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-aws-services.html
                   MessageBody: "$request.body"
                   QueueUrl: !Ref d365SourceQueue

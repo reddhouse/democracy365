@@ -171,7 +171,7 @@ as $proc$
 begin
   insert into sandbox.users(email_address, signin_code, verification_code_requested_on, verification_code_expiration, verification_code, is_verified, account_updates)
   select
-    concat(sandbox.make_lorem(1), '@', sandbox.make_lorem(1), '.com') as email_address,
+    concat(sandbox.make_lorem(1), sandbox.random(1, 100), '@', sandbox.make_lorem(1), '.com') as email_address,
     sandbox.make_numeric_serial() as signin_code,
     sandbox.random(now() - interval '3 months', now()) as verification_code_requested_on,
     sandbox.random(now(), now() + interval '12 months') as verification_code_expiration,
@@ -362,14 +362,14 @@ $proc$;
 call sandbox.insert_lorem_text();
 
 -- Users
-call sandbox.insert_dummy_users(5);
+call sandbox.insert_dummy_users(500);
 
 call sandbox.insert_new_user(_email_address := 'somebody@email.com');
 
 call sandbox.signout_user(6);
 
 -- Problems
-call sandbox.insert_dummy_problems(4);
+call sandbox.insert_dummy_problems(100);
 
 call sandbox.insert_problem(_problem_title := 'This is a problem title', _problem_description := 'This is a description of a problem with no length limit?', _problem_tags := '{"single", "word", "tags", "go", "here with spaces?"}');
 
@@ -386,17 +386,13 @@ call sandbox.insert_problem_link(_problem_id := 1, _link_title := 'great article
 call sandbox.insert_solution_link(_solution_id := 1, _link_title := 'great article with more info on barfoo', _link_url := 'https://google.com');
 
 -- Display
-select *
-from sandbox.users;
+-- select * from sandbox.users;
 
-select *
-from sandbox.problems;
+-- select * from sandbox.problems;
 
-select *
-from sandbox.solutions;
+-- select * from sandbox.solutions;
 
-select *
-from sandbox.links;
+-- select * from sandbox.links;
 
 -- Commit or Rollback
 commit;

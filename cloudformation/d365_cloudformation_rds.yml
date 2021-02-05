@@ -127,5 +127,6 @@ Resources:
       ConnectionPoolConfigurationInfo:
         MaxConnectionsPercent: '100'
         MaxIdleConnectionsPercent: '50'
+        # Specify how long the proxy waits for a database connection to become available before returning a timeout error. You can specify a period up to a maximum of five minutes. This setting only applies when the proxy has the maximum number of connections open and all connections are already in use.
         ConnectionBorrowTimeout: '120'
 

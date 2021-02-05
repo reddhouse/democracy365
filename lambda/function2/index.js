@@ -41,23 +41,19 @@ exports.handler = async (event) => {
     // Query database.
     result = await client.query(queryString)
 
-  } catch (error) {
-    caughtError = err
-    console.log('BUMMER: ', error)
-  }
+    // Test Dead Letter Queue with forced error
+    // throw("Testing Dead Letter Queue")
 
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify(result.rows)
+  } catch (error) {
+    caughtError = error
+    console.log('BUMMER: ', error)
   }
 
   // Test SQS queue trigger...
   if (event.Records) console.log(event.Records[0].body)
 
   return new Promise((resolve, reject) => {
-    caughtError ? reject(caughtError) : resolve(response)
+    // No need to resolve with a response as SQS won't process it anyway.
+    caughtError ? reject(caughtError) : resolve(undefined)
   })
 }

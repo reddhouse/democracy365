@@ -29,6 +29,17 @@ create table if not exists sandbox.solution_tokens (
 );
 
 -- *
+-- * Views
+-- *
+
+create materialized view if not exists sandbox.problem_rank
+as
+  select problem_id, rank() over (order by sum(sandbox.problem_vote_events.signed_vote) desc), sum(sandbox.problem_vote_events.signed_vote) as total_votes
+  from sandbox.problem_vote_events
+  group by sandbox.problem_vote_events.problem_id
+with no data;
+
+-- *
 -- * Functions
 -- *
 
@@ -106,15 +117,12 @@ begin
   loop
     -- Exit loop once token balance drops lower than balance floor, or every problem has been voted on.
     if _token_balance < _balance_floor or array_length(_arr_all_problem_ids, 1) = array_length(_arr_selected_problem_ids, 1) then
-      raise notice 'Dropped below floor or voted on everything.';
       exit outer_loop;
     end if;
     -- Choose random problem.
     _selected_problem := _arr_all_problem_ids[sandbox.random(1, array_length(_arr_all_problem_ids, 1))];
-    raise notice 'Selected problem: %', _selected_problem;
     -- Skip current iteration (outer loop) if we looked at this problem already.
     if _selected_problem = any(_arr_selected_problem_ids) then
-      raise notice 'Been here done this.';
       continue outer_loop;
     else
       _arr_selected_problem_ids := _arr_selected_problem_ids || _selected_problem;
@@ -139,16 +147,13 @@ begin
         else
           _problem_voting_plan := _problem_voting_plan || array[[_selected_problem, _num_votes_attempted * -1]];
         end if;
-        raise notice 'Vote added to plan.';
         exit inner_loop;
       end if;
       if _num_votes_attempted < 1 then
-        raise notice 'Insufficient balance for 1 additional vote.';
         exit outer_loop;
       end if;
     end loop;
   end loop;
-  raise notice 'All loops terminated.';
 end;
 $func$;
 
@@ -168,7 +173,13 @@ begin
   -- Loop over problem voting plan array and select corresponding solutions (ids) into new array.
   for counter in 1..array_length(_problem_voting_plan, 1)
   loop
-    _paired_solution_ids := array(select solution_id from sandbox.solutions where problem_id = _problem_voting_plan[counter][1]);
+    _paired_solution_ids := array(
+      select solution_id 
+      from sandbox.solutions 
+      where 
+        _problem_voting_plan[counter][2] > 0 and
+        problem_id = _problem_voting_plan[counter][1]
+    );
     -- Pick random number of voting attempts, 0 - max number of corresponding solutions.
     _num_voting_attempts := sandbox.random(0, array_length(_paired_solution_ids, 1));
     _max_votes_possible := _problem_voting_plan[counter][2];
@@ -285,41 +296,26 @@ declare
   _problem_voting_plan int[][];
   _solution_voting_plan int[][];
 begin
-  -- Loop(1) over users.
   for _u in
     select user_id, num_d365_tokens
     from sandbox.users 
   loop
     -- Make problem voting plan & solution voting plan arrays.
     _random_balance_floor := _u.num_d365_tokens * sandbox.random(1, 100)::decimal/100;
-    raise notice 'Loop 1, user_id: %, with % tokens, and balance floor: %', _u.user_id, _u.num_d365_tokens, _random_balance_floor;
-
     _problem_voting_plan := sandbox.make_dummy_problem_voting_plan(_starting_token_balance := _u.num_d365_tokens, _balance_floor := _random_balance_floor);
-    raise notice 'Finished problem voting plan for user %: %', _u.user_id, _problem_voting_plan;
-
     _solution_voting_plan := sandbox.make_dummy_solution_voting_plan(_problem_voting_plan := _problem_voting_plan);
-    raise notice 'Finished solution voting plan for user %: %', _u.user_id, _solution_voting_plan;
-
-    -- Loop(2) over problem voting plan array to cast votes.
+    -- Loop over problem voting plan array to cast votes.
     for counter in 1..array_length(_problem_voting_plan, 1)
     loop
       call sandbox.add_problem_vote(_user_id := _u.user_id, _problem_id := _problem_voting_plan[counter][1], _signed_vote := _problem_voting_plan[counter][2]);
-      raise notice 'Loop 2, problem vote added: %', _problem_voting_plan[counter:counter][1:2];
     end loop;
-
-    -- Loop(3) over solution voting plan array to cast votes. Unlike problem voting plans, solution voting plans can be empty (no solution votes).
-
-    -- TODO: Fix the following, not catching empty array???
-
-    raise notice 'ARRAY LENGTH: %', array_length(_solution_voting_plan, 1);
+    -- Loop over solution voting plan array (if not empty) to cast votes.
     if array_length(_solution_voting_plan, 1) > 0 then
       for counter in 1..array_length(_solution_voting_plan, 1)
       loop
         call sandbox.add_solution_vote(_user_id := _u.user_id, _solution_id := _solution_voting_plan[counter][1], _signed_vote := _solution_voting_plan[counter][2]);
-        raise notice 'Loop 2, solution vote added: %', _solution_voting_plan[counter:counter][1:2];
       end loop;
     end if;
-
   end loop;
 end;
 $proc$;
@@ -334,11 +330,17 @@ $proc$;
 
 call sandbox.insert_dummy_votes();
 
-select * from sandbox.problem_vote_events;
+-- select * from sandbox.problem_vote_events
+-- order by signed_vote desc;
 
-select * from sandbox.solution_vote_events;
+-- select * from sandbox.solution_vote_events;
 
--- select * from sandbox.solution_tokens;
+select * from sandbox.solution_tokens
+order by user_id, problem_id;
+
+-- Use "concurrently" option on subsequent refreshes.
+refresh materialized view sandbox.problem_rank;
+select * from sandbox.problem_rank;
 
 -- select num_d365_tokens from sandbox.users where user_id = 1;
 
