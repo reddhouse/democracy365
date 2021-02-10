@@ -28,16 +28,56 @@ create table if not exists sandbox.solution_tokens (
   unique (user_id, problem_id)
 );
 
+create table if not exists sandbox.problem_rank_history (
+  problem_id int references sandbox.problems (problem_id),
+  historical_date date default current_date,
+  historical_rank int,
+  total_votes int
+);
+
+create table if not exists sandbox.solution_rank_history (
+  problem_id int references sandbox.problems (problem_id),
+  solution_id int references sandbox.solutions (solution_id),
+  historical_date date default current_date,
+  historical_rank int,
+  total_votes int
+);
+
 -- *
 -- * Views
 -- *
 
 create materialized view if not exists sandbox.problem_rank
 as
-  select problem_id, rank() over (order by sum(sandbox.problem_vote_events.signed_vote) desc), sum(sandbox.problem_vote_events.signed_vote) as total_votes
+  select 
+    problem_id, 
+    rank() over (
+      order by sum(sandbox.problem_vote_events.signed_vote) desc
+    ), 
+    sum(sandbox.problem_vote_events.signed_vote) as total_votes
   from sandbox.problem_vote_events
   group by sandbox.problem_vote_events.problem_id
+  order by rank
 with no data;
+
+create unique index idx_problem_rank on sandbox.problem_rank(problem_id);
+
+create materialized view if not exists sandbox.solution_rank
+as
+  select 
+    problem_id, 
+    sandbox.solutions.solution_id,
+    rank() over (
+      partition by sandbox.solutions.problem_id
+      order by sum(sandbox.solution_vote_events.signed_vote) desc
+    ), 
+    sum(sandbox.solution_vote_events.signed_vote) as total_votes
+  from sandbox.solutions
+  join sandbox.solution_vote_events on sandbox.solutions.solution_id = sandbox.solution_vote_events.solution_id
+  group by sandbox.solutions.problem_id, sandbox.solutions.solution_id
+with no data;
+
+create unique index idx_solution_rank on sandbox.solution_rank(solution_id);
 
 -- *
 -- * Functions
@@ -166,7 +206,7 @@ declare
   _max_votes_possible int;
   _selected_solution int;
   _num_votes int;
-  _is_down_vote boolean;
+  _is_up_vote boolean;
 begin
   -- Avoid returning null value by setting value as empty array.
   _solution_voting_plan := array[]::int[];
@@ -193,11 +233,11 @@ begin
       _num_votes := sandbox.random(1, _max_votes_possible);
       _selected_solution := sandbox.random(1, array_length(_paired_solution_ids, 1));
       -- Note, 33% chance... Downvotes are likely less common in solutions compared to problems.
-      _is_down_vote := not (sandbox.random(0,2) = 0);
-      if _is_down_vote then
-        _solution_voting_plan := _solution_voting_plan || array[[_paired_solution_ids[_selected_solution], _num_votes * -1]];
-      else
+      _is_up_vote := not (sandbox.random(0,2) = 0);
+      if _is_up_vote then
         _solution_voting_plan := _solution_voting_plan || array[[_paired_solution_ids[_selected_solution], _num_votes]];
+      else
+        _solution_voting_plan := _solution_voting_plan || array[[_paired_solution_ids[_selected_solution], _num_votes * -1]];
       end if;
       _max_votes_possible := _max_votes_possible - _num_votes;
       _num_voting_attempts := _num_voting_attempts - 1;
@@ -320,6 +360,19 @@ begin
 end;
 $proc$;
 
+create or replace procedure sandbox.log_rank_histories()
+language plpgsql
+as $proc$
+begin
+  -- Copy problems from materialized view into log
+  insert into sandbox.problem_rank_history (problem_id, historical_rank, total_votes)
+  select * from sandbox.problem_rank;
+  -- Copy solutions from materialized view into log
+  insert into sandbox.solution_rank_history (problem_id, solution_id, historical_rank, total_votes)
+  select * from sandbox.solution_rank;
+end;
+$proc$;
+
 -- *
 -- * Sandbox
 -- *
@@ -335,12 +388,20 @@ call sandbox.insert_dummy_votes();
 
 -- select * from sandbox.solution_vote_events;
 
-select * from sandbox.solution_tokens
-order by user_id, problem_id;
+-- select * from sandbox.solution_tokens
+-- order by user_id, problem_id;
 
 -- Use "concurrently" option on subsequent refreshes.
 refresh materialized view sandbox.problem_rank;
 select * from sandbox.problem_rank;
+
+-- Use "concurrently" option on subsequent refreshes.
+refresh materialized view sandbox.solution_rank;
+select * from sandbox.solution_rank;
+
+call sandbox.log_rank_histories();
+-- select * from sandbox.problem_rank_history;
+select * from sandbox.solution_rank_history;
 
 -- select num_d365_tokens from sandbox.users where user_id = 1;
 
