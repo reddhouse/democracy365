@@ -43,6 +43,12 @@ create table if not exists sandbox.solution_rank_history (
   total_votes int
 );
 
+create table if not exists sandbox.delegated_tokens (
+  recipient_user_id int references sandbox.users (user_id),
+  delegating_user_id int references sandbox.users (user_id),
+  delegation_ts timestamptz default now()
+);
+
 -- *
 -- * Views
 -- *
@@ -300,11 +306,11 @@ begin
   select * into _selected_user
   from sandbox.users
   where user_id = _user_id;
-  -- Grab corresponding problem_id so we can check solution token balance
+  -- Grab corresponding problem_id so we can check solution token balance.
   select * into _selected_solution
   from sandbox.solutions
   where solution_id = _solution_id;
-  -- Get balance of solution tokens for given user and problem_id
+  -- Get balance of solution tokens for given user and problem_id.
   select solution_tokens into _available_solution_tokens
   from sandbox.solution_tokens
   where
@@ -364,12 +370,64 @@ create or replace procedure sandbox.log_rank_histories()
 language plpgsql
 as $proc$
 begin
-  -- Copy problems from materialized view into log
+  -- Copy problems from materialized view into log.
   insert into sandbox.problem_rank_history (problem_id, historical_rank, total_votes)
   select * from sandbox.problem_rank;
-  -- Copy solutions from materialized view into log
+  -- Copy solutions from materialized view into log.
   insert into sandbox.solution_rank_history (problem_id, solution_id, historical_rank, total_votes)
   select * from sandbox.solution_rank;
+end;
+$proc$;
+
+create or replace procedure sandbox.delegate(_delegating_user_id int, _recipient_user_id int)
+language plpgsql
+as $proc$
+declare
+  _delegating_user_token_balance int;
+begin
+  -- Check/throw if user is already delegating votes to another user.
+  if exists (select 1 from sandbox.delegated_tokens where sandbox.delegated_tokens.delegating_user_id = _delegating_user_id) then
+    raise exception sqlstate '90001' using message = 'User is already delegating votes';
+  else
+    -- Log the delegation.
+    insert into sandbox.delegated_tokens (recipient_user_id, delegating_user_id)
+    values (_recipient_user_id, _delegating_user_id);
+    -- Get token balance. 
+    select num_d365_tokens into _delegating_user_token_balance
+    from sandbox.users
+    where user_id = _delegating_user_id;
+    -- Adjust token balance, giver.
+    update sandbox.users
+    set num_d365_tokens = 0
+    where user_id = _delegating_user_id;
+    -- Adjust token balance, receiver.
+    update sandbox.users
+    set num_d365_tokens = num_d365_tokens + _delegating_user_token_balance
+    where user_id = _recipient_user_id;
+  end if; 
+end;
+$proc$;
+
+create or replace procedure sandbox.airdrop()
+language plpgsql
+as $proc$
+begin
+  -- Use CTE to count "extra" tokens that are owed per delegation count.
+  with _total_delegations as (
+    select 
+      user_id, 
+      count(recipient_user_id)
+    from sandbox.users
+    left join sandbox.delegated_tokens on sandbox.users.user_id = sandbox.delegated_tokens.recipient_user_id
+    group by sandbox.users.user_id
+  )
+  update sandbox.users
+  set num_d365_tokens = num_d365_tokens + (1 + _total_delegations.count)
+  from _total_delegations
+  where 
+    sandbox.users.user_id = _total_delegations.user_id and
+    -- Do not give tokens to delegating users, as they have already been dropped to recipients.
+    not exists (select 1 from sandbox.delegated_tokens where sandbox.delegated_tokens.delegating_user_id = sandbox.users.user_id);
 end;
 $proc$;
 
@@ -393,17 +451,24 @@ call sandbox.insert_dummy_votes();
 
 -- Use "concurrently" option on subsequent refreshes.
 refresh materialized view sandbox.problem_rank;
-select * from sandbox.problem_rank;
+-- select * from sandbox.problem_rank;
 
 -- Use "concurrently" option on subsequent refreshes.
 refresh materialized view sandbox.solution_rank;
-select * from sandbox.solution_rank;
+-- select * from sandbox.solution_rank;
 
 call sandbox.log_rank_histories();
 -- select * from sandbox.problem_rank_history;
-select * from sandbox.solution_rank_history;
+-- select * from sandbox.solution_rank_history;
 
--- select num_d365_tokens from sandbox.users where user_id = 1;
+select user_id, num_d365_tokens from sandbox.users order by user_id limit 10;
+call sandbox.airdrop();
+select user_id, num_d365_tokens from sandbox.users order by user_id limit 10;
+call sandbox.delegate(_delegating_user_id := 1, _recipient_user_id := 2);
+call sandbox.delegate(_delegating_user_id := 3, _recipient_user_id := 4);
+select user_id, num_d365_tokens from sandbox.users order by user_id limit 10;
+call sandbox.airdrop();
+select user_id, num_d365_tokens from sandbox.users order by user_id limit 10;
 
 -- Commit or Rollback
 rollback;
