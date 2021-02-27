@@ -2,7 +2,8 @@ const AWS = require('aws-sdk')
 const { Client } = require('pg')
 const { promisify } = require('util')
 
-const { REGION, PROXY_HOST, DB_PORT, DB_USER, DB_NAME } = process.env
+// DB_HOST and DB_PASSWORD should be deleted once proxy goes live.
+const { REGION, DB_HOST, DB_PASSWORD, PROXY_HOST, DB_PORT, DB_USER, DB_NAME } = process.env
 let client
 
 const getRDSToken = () => {
@@ -27,15 +28,39 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  const queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
-  let result, caughtError
+  let queryString, result, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
     if (typeof client === 'undefined') {
-      const rdsToken = await getRDSToken()
-      client = new Client(clientConfig(rdsToken))
+      // Uncomment once proxy goes live.
+      // const rdsToken = await getRDSToken()
+      // client = new Client(clientConfig(rdsToken))
+
+      // Delete and make use of connection method above, once proxy goes live.
+      client = new Client({
+        host: DB_HOST,
+        database: DB_NAME,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASSWORD
+      })
+
       await client.connect()
+    }
+
+    // This function is invoked by SQS, which is currently sending only 1 record, per config.
+    const eventBody = JSON.parse(event.Records[0].body)
+
+    switch (eventBody.procedureName) {
+      case 'AIRDROP':
+        queryString = `call sandbox.airdrop()`
+        break;
+      case 'TEST':
+        queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
+        break;
+      default:
+        throw (`Event body does not contain known procedure`);
     }
 
     // Query database.
@@ -48,9 +73,6 @@ exports.handler = async (event) => {
     caughtError = error
     console.log('BUMMER: ', error)
   }
-
-  // Test SQS queue trigger...
-  if (event.Records) console.log(event.Records[0].body)
 
   return new Promise((resolve, reject) => {
     // No need to resolve with a response as SQS won't process it anyway.

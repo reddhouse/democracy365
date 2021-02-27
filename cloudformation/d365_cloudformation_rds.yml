@@ -6,6 +6,16 @@ Outputs:
   d365DBEndpoint:
     Description: DB Endpoint
     Value: !GetAtt d365DBInstance1.Endpoint.Address
+    # The following Export should be deleted or commented out once proxy goes live.
+    Export:
+      Name: !Sub '${AWS::StackName}-d365DBEndpoint'
+  
+  # The following Output should be deleted or commented out entirely, once proxy goes live.
+  d365RDSSecret:
+    Description: Password for postgres DB
+    Value: !Ref d365RDSSecret
+    Export:
+      Name: !Sub '${AWS::StackName}-d365RDSSecret'
 
   d365RDSProxy1Endpoint:
     Description: RDS Proxy Endpoint

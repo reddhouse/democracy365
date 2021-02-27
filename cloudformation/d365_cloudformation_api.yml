@@ -15,6 +15,12 @@ Outputs:
     Export:
       Name: !Sub '${AWS::StackName}-d365KMSKeyId'
   
+  d365Layer1Arn:
+    Description: The Arn of LayerVersion1 to use in d365stack-helpers
+    Value: !Ref d365Layer1
+    Export:
+      Name: !Sub '${AWS::StackName}-d365Layer1Arn'
+  
   d365ApiEndpoint:
     Description: Api Endpoint
     Value: !GetAtt d365Api.ApiEndpoint
@@ -272,11 +278,25 @@ Resources:
                 httpMethod: "POST"
                 uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function5Alias1}/invocations'
                 connectionType: "INTERNET"
+          /signup:
+            post:
+              responses:
+                default:
+                  description: "Default response for POST /signup"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
+                payloadFormatVersion: "2.0"
+                type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function6Alias1}/invocations'
+                connectionType: "INTERNET"
           /write:
             post:
               responses:
                 default:
                   description: "Default response for POST /write"
+              security:
+              - d365LambdaAuthorizer1: []
               x-amazon-apigateway-integration:
                 integrationSubtype: "SQS-SendMessage"
                 credentials: !GetAtt d365IAMApiGatewayRole.Arn
@@ -342,6 +362,18 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
           PROXY_HOST:
             Fn::ImportValue:
               !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -398,6 +430,18 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
           PROXY_HOST:
             Fn::ImportValue:
               !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -458,6 +502,18 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
           PROXY_HOST:
             Fn::ImportValue:
               !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -504,6 +560,18 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
           PROXY_HOST:
             Fn::ImportValue:
               !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -551,6 +619,18 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
           PROXY_HOST:
             Fn::ImportValue:
               !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -585,3 +665,62 @@ Resources:
       FunctionName: !Ref d365Function5
       FunctionVersion: !GetAtt d365Function5Version1.Version
       Name: ALIAS5
+
+  # function6, signup
+  d365Function6:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function6.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+          TEST_EMAIL_ADDR: "{{resolve:ssm:d365_test_email_addr:1}}"
+          KMS_KEY_ID: !Ref d365KMSKey
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Function6Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function6
+      Description: v1
+
+  d365Function6Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function6
+      FunctionVersion: !GetAtt d365Function6Version1.Version
+      Name: ALIAS6

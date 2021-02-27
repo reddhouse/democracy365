@@ -2,7 +2,8 @@ const AWS = require('aws-sdk')
 const { Client } = require('pg')
 const { promisify } = require('util')
 
-const { REGION, PROXY_HOST, DB_PORT, DB_USER, DB_NAME, KMS_KEY_ID } = process.env
+// DB_HOST and DB_PASSWORD should be deleted once proxy goes live.
+const { REGION, DB_HOST, DB_PASSWORD, PROXY_HOST, DB_PORT, DB_USER, DB_NAME, KMS_KEY_ID } = process.env
 let client, kms
 
 const getRDSToken = () => {
@@ -56,8 +57,19 @@ exports.handler = async (event) => {
   try {
     // Establish database connection with attempted reuse of execution context.
     if (typeof client === 'undefined') {
-      const rdsToken = await getRDSToken()
-      client = new Client(clientConfig(rdsToken))
+      // Uncomment once proxy goes live.
+      // const rdsToken = await getRDSToken()
+      // client = new Client(clientConfig(rdsToken))
+
+      // Delete and make use of connection method above, once proxy goes live.
+      client = new Client({
+        host: DB_HOST,
+        database: DB_NAME,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASSWORD
+      })
+
       await client.connect()
     }
 

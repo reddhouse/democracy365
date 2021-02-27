@@ -1,23 +1,71 @@
 const AWS = require('aws-sdk')
+const { Client } = require('pg')
+const { promisify } = require('util')
+
+// DB_HOST and DB_PASSWORD should be deleted once proxy goes live.
+const { REGION, DB_HOST, DB_PASSWORD, PROXY_HOST, DB_PORT, DB_USER, DB_NAME, KMS_KEY_ID } = process.env
+let client
+// let kms
+
+const getRDSToken = () => {
+  const signer = new AWS.RDS.Signer({
+    region: REGION,
+    hostname: PROXY_HOST,
+    port: Number(DB_PORT),
+    username: DB_USER
+  })
+  return promisify(signer.getAuthToken).bind(signer)
+}
+
+const clientConfig = (rdsToken) => {
+  return {
+    host: PROXY_HOST,
+    database: DB_NAME,
+    port: DB_PORT,
+    user: DB_USER,
+    password: rdsToken,
+    ssl: true
+  }
+}
 
 exports.handler = async (event) => {
-  const { REGION, PROXY_HOST, DB_PORT, DB_USER, DB_NAME, KMS_KEY_ID } = process.env
-
-  let caughtError
+  //const eventBody = JSON.parse(event.body)
+  const queryString = 'select user_id from sandbox.users order by user_id limit 10'
+  let result, caughtError
 
   try {
+    // Establish database connection with attempted reuse of execution context.
+    if (typeof client === 'undefined') {
+      // Uncomment once proxy goes live.
+      // const rdsToken = await getRDSToken()
+      // client = new Client(clientConfig(rdsToken))
 
-  } catch (err) {
-    caughtError = err
-    console.log('BUMMER: ', err)
+      // Delete and make use of connection method above, once proxy goes live.
+      client = new Client({
+        host: DB_HOST,
+        database: DB_NAME,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASSWORD
+      })
+
+      await client.connect()
+    }
+
+    // Query database.
+    result = await client.query(queryString)
+
+  } catch (error) {
+    caughtError = error
+    console.log('BUMMER: ', error)
   }
 
-  let response = {
+  const response = {
     "statusCode": 200,
     "statusDescription": "200 OK",
     "isBase64Encoded": false,
     "headers": { "Content-Type": "text/html" },
-    "body": { "foo": "bar" }
+    "body": JSON.stringify(result.rows)
   }
 
   return new Promise((resolve, reject) => {

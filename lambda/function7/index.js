@@ -28,9 +28,7 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  //const eventBody = JSON.parse(event.body)
-  const queryString = 'select user_id, num_d365_tokens, signout_ts from sandbox.users where user_id=3'
-  let result, caughtError
+  let queryString, result, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -51,23 +49,31 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
+    // This function was invoked by EventBridge (cron job) with custom JSON text, so the event has far fewer properties than usual.
+    switch (event.procedureName) {
+      case 'AIRDROP':
+        queryString = `call sandbox.airdrop()`
+        break;
+      case 'TEST':
+        queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
+        break;
+      default:
+        throw (`Event body does not contain known procedure`);
+    }
+
     // Query database.
     result = await client.query(queryString)
+
+    // Test Dead Letter Queue with forced error
+    // throw("Testing Dead Letter Queue")
 
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
   }
 
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify(result.rows)
-  }
-
   return new Promise((resolve, reject) => {
-    caughtError ? reject(caughtError) : resolve(response)
+    // No need to resolve with a response as SQS won't process it anyway.
+    caughtError ? reject(caughtError) : resolve(undefined)
   })
 }

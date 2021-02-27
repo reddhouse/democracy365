@@ -34,16 +34,20 @@ const sendEmail = (signinCode) => {
     Message: {
       Body: {
         Html: {
-          Data: `<html><body><p>This is your secret login code:</p><h3>${signinCode}</h3></body></html>`,
+          Data: `<html><body>
+                  <p>Welcome to democracy365!</p>
+                  <p>Please use the following code when you sign in to your account:</p>
+                  <h3>${signinCode}</h3>
+                </body></html>`,
           Charset: 'UTF-8'
         },
         Text: {
-          Data: `Your secret login code: ${signinCode}`,
+          Data: `Welcome to democracy365. Your secret login code is: ${signinCode}`,
           Charset: 'UTF-8'
         }
       },
       Subject: {
-        Data: 'Your secret login code',
+        Data: 'Welcome to democracy365',
         Charset: 'UTF-8'
       }
     },
@@ -55,7 +59,6 @@ const sendEmail = (signinCode) => {
 
 exports.handler = async (event) => {
   const eventBody = JSON.parse(event.body)
-  const queryString = `select user_id, signin_code from sandbox.users where email_address = '${eventBody.emailAddress}'`
   let userId, signinCode, caughtError
 
   try {
@@ -78,7 +81,12 @@ exports.handler = async (event) => {
     }
 
     // Query database.
-    const result = await client.query(queryString)
+
+    // Add email address to database. Postgres will throw an error if it's not unique.
+    await client.query(`call sandbox.insert_new_user(_email_address := '${eventBody.emailAddress}')`)
+
+    // Go ahead and grab user_id and signin_code to send to new user. This bypasses step 1 of the normal sign-in flow, keeping time and emails to a minimum.
+    const result = await client.query(`select user_id, signin_code from sandbox.users where email_address = '${eventBody.emailAddress}'`)
     userId = result.rows[0].user_id
     signinCode = result.rows[0].signin_code
 

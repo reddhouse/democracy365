@@ -24,6 +24,90 @@ Parameters:
     Description: Enter the name of the stack that contains api resources
 
 Resources:
+  ## EventBridge
+  # Rule1, AIRDROP
+  d365ScheduledEventRule1: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Scheduled Event Rule 1 - AIRDROP"
+      # Cron expression triggers event every day at 12am GMT
+      ScheduleExpression: "cron(0 0 * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: !Ref d365Function7Alias1
+          Id: "Target-Function7-Alias1"
+          Input: '{ "procedureName": "AIRDROP" }'
+
+  d365PermissionForEventsToInvokeLambdaFunction7: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref d365Function7
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt d365ScheduledEventRule1.Arn
+
+  ## Lambda
+  # function7, scheduled events handler (cron jobs)
+  d365Function7:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function7.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+      Layers:
+        - Fn::ImportValue:
+            !Sub '${ApiStackNameParameter}-d365Layer1Arn'
+      Role:
+        Fn::ImportValue:
+          !Sub '${ApiStackNameParameter}-d365LambdaRoleArn'
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
+  d365Function7Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function7
+      Description: v1
+
+  d365Function7Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function7
+      FunctionVersion: !GetAtt d365Function7Version1.Version
+      Name: ALIAS7
+
   # function99, misc
   # d365Function99:
   #   Type: AWS::Lambda::Function
@@ -35,6 +119,18 @@ Resources:
   #     Environment:
   #       Variables:
   #         REGION: us-east-1
+  #         # This variable should be deleted or commented out once proxy goes live.
+  #         DB_HOST:
+  #           Fn::ImportValue:
+  #             !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+  #         # This variable should be deleted or commented out once proxy goes live.
+  #         DB_PASSWORD:
+  #           !Join
+  #             - ''
+  #             - - '{{resolve:secretsmanager:'
+  #               - Fn::ImportValue:
+  #                   !Sub '${RDSStackNameParameter}-d365RDSSecret'
+  #               - ':SecretString:password}}'
   #         PROXY_HOST:
   #           Fn::ImportValue:
   #             !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
@@ -45,6 +141,9 @@ Resources:
   #         KMS_KEY_ID:
   #           Fn::ImportValue:
   #             !Sub '${ApiStackNameParameter}-d365KMSKeyId'
+  #     Layers:
+  #       - Fn::ImportValue:
+  #           !Sub '${ApiStackNameParameter}-d365Layer1Arn'
   #     Role:
   #       Fn::ImportValue:
   #         !Sub '${ApiStackNameParameter}-d365LambdaRoleArn'
