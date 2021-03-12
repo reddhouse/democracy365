@@ -28,7 +28,7 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  let queryString, result, caughtError
+  let userId, eventBody, queryString, queryParams, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -49,33 +49,71 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
-    // This function is invoked by SQS, which is currently sending only 1 record, per config.
-    const eventBody = JSON.parse(event.Records[0].body)
+    userId = event.requestContext.authorizer.lambda.userId
+
+    // Allow for testing in the AWS console, where test events are not stringified.
+    if (typeof event.body === 'object') {
+      eventBody = event.body
+    } else {
+      eventBody = JSON.parse(event.body)
+    }
 
     switch (eventBody.procedureName) {
-      case 'AIRDROP':
-        queryString = `call sandbox.airdrop()`
+      case 'ADD_PROBLEM_VOTE':
+        queryString = 'call sandbox.add_problem_vote(_user_id := $1, _problem_id := $2, _signed_vote := $3)'
+        queryParams = [userId, eventBody.problemId, eventBody.signedVote]
+        break;
+      case 'ADD_SOLUTION_VOTE':
+        queryString = 'call sandbox.add_solution_vote(_user_id := $1, _solution_id := $2, _signed_vote := $3)'
+        queryParams = [userId, eventBody.solutionId, eventBody.signedVote]
+        break;
+      case 'DELEGATE':
+        queryString = 'call sandbox.delegate(_delegating_user_id := $1, _recipient_user_id := $2)'
+        queryParams = [userId, eventBody.recipientUserId]
+        break;
+      case 'INSERT_PROBLEM':
+        queryString = 'call sandbox.insert_problem(_problem_title := $1, _problem_description := $2, _problem_tags := $3)'
+        queryParams = [eventBody.problemTitle, eventBody.problemDescription, eventBody.problemTags]
+        break;
+      case 'INSERT_PROBLEM_LINK':
+        queryString = 'call sandbox.insert_problem_link(_problem_id := $1, _link_title := $2, _link_url := $3)'
+        queryParams = [eventBody.problemId, eventBody.linkTitle, eventBody.linkUrl]
+        break;
+      case 'INSERT_SOLUTION':
+        queryString = 'call sandbox.insert_solution(_problem_id := $1, _solution_title := $2, _solution_description := $3, _solution_tags := $4)'
+        queryParams = [eventBody.problemId, eventBody.solutionTitle, eventBody.solutionDescription, eventBody.solutionTags]
+        break;
+      case 'INSERT_SOLUTION_LINK':
+        queryString = 'call sandbox.insert_solution_link(_solution_id := $1, _link_title := $2, _link_url := $3)'
+        queryParams = [eventBody.solutionId, eventBody.linkTitle, eventBody.linkUrl]
+        break;
+      case 'SIGNOUT':
+        queryString = 'call sandbox.signout_user(_user_id := $1)'
+        queryParams = [userId]
         break;
       case 'TEST':
-        queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
+        queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = $1`
+        queryParams = [3]
         break;
       default:
-        throw (`Event body does not contain known procedure`);
+        throw (`[d365] Event body does not contain known procedure`);
     }
 
     // Query database.
-    result = await client.query(queryString)
+    await client.query(queryString, queryParams)
 
-    // Test Dead Letter Queue with forced error
-    // throw("Testing Dead Letter Queue")
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK"
+    }
 
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {
-    // No need to resolve with a response as SQS won't process it anyway.
-    caughtError ? reject(caughtError) : resolve(undefined)
+    caughtError ? reject(caughtError) : resolve(response)
   })
 }

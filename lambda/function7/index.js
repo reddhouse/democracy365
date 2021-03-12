@@ -28,7 +28,7 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  let queryString, result, caughtError
+  let queryString, queryParams, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -49,31 +49,39 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
-    // This function was invoked by EventBridge (cron job) with custom JSON text, so the event has far fewer properties than usual.
+    // This function was invoked by EventBridge (cron job) with custom JSON text, so the event has fewer properties than usual.
     switch (event.procedureName) {
       case 'AIRDROP':
-        queryString = `call sandbox.airdrop()`
+        queryString = 'call sandbox.airdrop()'
+        queryParams = []
         break;
-      case 'TEST':
-        queryString = `update sandbox.users set signout_ts = signout_ts + (20 * interval '1 minute') where user_id = 3`
+      case 'LOG_RANK_HISTORIES':
+        queryString = 'call sandbox.log_rank_histories()'
+        queryParams = []
+        break;
+      case 'REFRESH_PROBLEM_RANK':
+        queryString = 'refresh materialized view concurrently sandbox.problem_rank'
+        queryParams = []
+        break;
+      case 'REFRESH_SOLUTION_RANK':
+        queryString = 'refresh materialized view concurrently sandbox.solution_rank'
+        queryParams = []
         break;
       default:
-        throw (`Event body does not contain known procedure`);
+        throw (`[d365] Event does not contain known procedure`);
     }
 
     // Query database.
-    result = await client.query(queryString)
-
-    // Test Dead Letter Queue with forced error
-    // throw("Testing Dead Letter Queue")
+    await client.query(queryString, queryParams)
 
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {
-    // No need to resolve with a response as SQS won't process it anyway.
+    // No need to resolve with a response as EventBridge won't process it anyway.
     caughtError ? reject(caughtError) : resolve(undefined)
   })
 }

@@ -52,7 +52,8 @@ exports.handler = async (event) => {
     return response
   }
 
-  const queryString = `select signin_code, signout_ts from sandbox.users where user_id = ${userId}`
+  const queryString = 'select signin_code, signout_ts from sandbox.users where user_id = $1'
+  const queryParams = [userId]
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -74,20 +75,25 @@ exports.handler = async (event) => {
     }
 
     // Query database.
-    const result = await client.query(queryString)
-    messageToBeVerified = `democracy365${result.rows[0].signin_code}${result.rows[0].signout_ts}`
+    const result = await client.query(queryString, queryParams)
+    if (result.rows.length == 0) {
+      throw (`[d365] Query did not return any results for userId: ${queryParams[0]}`)
+    } else {
+      messageToBeVerified = `democracy365${result.rows[0].signin_code}${result.rows[0].signout_ts}`
+    }
 
     // Verify signature.
     const verificationResponse = await verifySig(messageToBeVerified.toString(), Buffer.from(hexSignature, 'hex'))
     if (verificationResponse.SignatureValid == true) {
       response = {
         "isAuthorized": true,
-        "context": { "userID": userId }
+        "context": { "userId": userId }
       }
     }
 
   } catch (error) {
     console.log('BUMMER: ', error)
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
     return response
   }
 

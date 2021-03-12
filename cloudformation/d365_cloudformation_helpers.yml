@@ -29,22 +29,22 @@ Resources:
   d365ScheduledEventRule1: 
     Type: AWS::Events::Rule
     Properties: 
-      Description: "Scheduled Event Rule 1 - AIRDROP"
+      Description: Scheduled Event Rule 1 - AIRDROP
       # Cron expression triggers event every day at 12am GMT
-      ScheduleExpression: "cron(0 0 * * ? *)"
-      State: "ENABLED"
+      ScheduleExpression: cron(0 8 * * ? *)
+      State: ENABLED
       Targets: 
         - 
           Arn: !Ref d365Function7Alias1
-          Id: "Target-Function7-Alias1"
+          Id: Target-Function7-Alias1
           Input: '{ "procedureName": "AIRDROP" }'
 
   d365PermissionForEventsToInvokeLambdaFunction7: 
     Type: AWS::Lambda::Permission
     Properties: 
       FunctionName: !Ref d365Function7
-      Action: "lambda:InvokeFunction"
-      Principal: "events.amazonaws.com"
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
       SourceArn: !GetAtt d365ScheduledEventRule1.Arn
 
   ## Lambda

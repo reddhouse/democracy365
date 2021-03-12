@@ -40,9 +40,7 @@ const signMessage = (msg) => {
 }
 
 exports.handler = async (event) => {
-  const eventBody = JSON.parse(event.body)
-  const queryString = `select signin_code, signout_ts from sandbox.users where user_id = '${eventBody.userId}'`
-  let signinCode, signoutTs, authToken, caughtError
+  let eventBody, queryString, queryParams, result, signinCode, signoutTs, authToken, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -63,10 +61,18 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
+    eventBody = JSON.parse(event.body)
+    queryString = 'select signin_code, signout_ts from sandbox.users where user_id = $1'
+    queryParams = [eventBody.userId]
+
     // Query database.
-    const result = await client.query(queryString)
-    signinCode = result.rows[0].signin_code
-    signoutTs = result.rows[0].signout_ts
+    result = await client.query(queryString, queryParams)
+    if (result.rows.length == 0) {
+      throw (`[d365] Query did not return any results for userId: ${queryParams[0]}`)
+    } else {
+      signinCode = result.rows[0].signin_code
+      signoutTs = result.rows[0].signout_ts
+    }
 
     // Throw error if codes do not match.
     if (eventBody.signinCode != signinCode) {
@@ -78,17 +84,18 @@ exports.handler = async (event) => {
     const hexSignature = signedMessage.Signature.toString('hex')
     authToken = `${eventBody.userId}.${hexSignature}`
 
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK",
+      "isBase64Encoded": false,
+      "headers": { "Content-Type": "text/html" },
+      "body": JSON.stringify({ "authToken": authToken })
+    }
+
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
-  }
-
-  let response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify({ "authToken": authToken })
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {

@@ -29,9 +29,7 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  //const eventBody = JSON.parse(event.body)
-  const queryString = 'select user_id from sandbox.users order by user_id limit 10'
-  let result, caughtError
+  let eventBody, queryString, queryParams, result, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -52,20 +50,25 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
+    eventBody = JSON.parse(event.body)
+    queryString = 'select user_id from sandbox.users order by user_id limit $1'
+    queryParams = [10]
+
     // Query database.
-    result = await client.query(queryString)
+    result = await client.query(queryString, queryParams)
+
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK",
+      "isBase64Encoded": false,
+      "headers": { "Content-Type": "text/html" },
+      "body": JSON.stringify(result.rows)
+    }
 
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
-  }
-
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify(result.rows)
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {

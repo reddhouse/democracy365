@@ -38,56 +38,56 @@ Parameters:
 
 Resources:
   ## SQS
-  d365SourceQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      FifoQueue: 'true'
-      # With this setting for FIFO queues, during the deduplication interval, Amazon SQS treats messages that are sent with identical content as duplicates and delivers only one copy of the message. Amazon SQS will use a SHA-256 hash to generate the message deduplication ID (a message attribute) using the body of the message—but not the attributes of the message.
-      ContentBasedDeduplication: 'true'
-      RedrivePolicy:
-        deadLetterTargetArn: !GetAtt d365DeadLetterQueue.Arn
-        maxReceiveCount: 1
-      # From SQS docs: The length of time during which a message will be unavailable after a message is delivered from the queue. This blocks other components from receiving the same message and gives the initial component (lambda in our case) time to process and delete the message from the queue.
-      # From Lambda docs: To allow your function time to process each batch of records, set the source queue's visibility timeout to at least 6 times the timeout that you configure on your function. The extra time allows for Lambda to retry if your function execution is throttled while your function is processing a previous batch.
-      # https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
-      VisibilityTimeout: 18
+  # d365SourceQueue:
+  #   Type: AWS::SQS::Queue
+  #   Properties:
+  #     FifoQueue: 'true'
+  #     # With this setting for FIFO queues, during the deduplication interval, Amazon SQS treats messages that are sent with identical content as duplicates and delivers only one copy of the message. Amazon SQS will use a SHA-256 hash to generate the message deduplication ID (a message attribute) using the body of the message—but not the attributes of the message.
+  #     ContentBasedDeduplication: 'true'
+  #     RedrivePolicy:
+  #       deadLetterTargetArn: !GetAtt d365DeadLetterQueue.Arn
+  #       maxReceiveCount: 1
+  #     # From SQS docs: The length of time during which a message will be unavailable after a message is delivered from the queue. This blocks other components from receiving the same message and gives the initial component (lambda in our case) time to process and delete the message from the queue.
+  #     # From Lambda docs: To allow your function time to process each batch of records, set the source queue's visibility timeout to at least 6 times the timeout that you configure on your function. The extra time allows for Lambda to retry if your function execution is throttled while your function is processing a previous batch.
+  #     # https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+  #     VisibilityTimeout: 18
 
-  d365DeadLetterQueue:
-    Type: AWS::SQS::Queue
-    Properties:
-      FifoQueue: 'true'
+  # d365DeadLetterQueue:
+  #   Type: AWS::SQS::Queue
+  #   Properties:
+  #     FifoQueue: 'true'
 
-  d365IAMSQSPolicy1: 
-    Type: AWS::SQS::QueuePolicy
-    Properties: 
-      Queues: 
-        - !Ref d365SourceQueue
-      PolicyDocument: 
-        Statement: 
-          - Effect: Allow
-            Action: 
-              - SQS:SendMessage
-              - SQS:ReceiveMessage
-            Resource: !GetAtt d365SourceQueue.Arn
-            Principal:  
-              AWS:
-                - !Ref 'AWS::AccountId'
+  # d365IAMSQSPolicy1: 
+  #   Type: AWS::SQS::QueuePolicy
+  #   Properties: 
+  #     Queues: 
+  #       - !Ref d365SourceQueue
+  #     PolicyDocument: 
+  #       Statement: 
+  #         - Effect: Allow
+  #           Action: 
+  #             - SQS:SendMessage
+  #             - SQS:ReceiveMessage
+  #           Resource: !GetAtt d365SourceQueue.Arn
+  #           Principal:  
+  #             AWS:
+  #               - !Ref 'AWS::AccountId'
   
-  d365IAMSQSPolicy2: 
-    Type: AWS::SQS::QueuePolicy
-    Properties: 
-      Queues: 
-        - !Ref d365DeadLetterQueue
-      PolicyDocument: 
-        Statement: 
-          - Effect: Allow
-            Action: 
-              - SQS:SendMessage
-              - SQS:ReceiveMessage
-            Resource: !GetAtt d365DeadLetterQueue.Arn
-            Principal:  
-              AWS:
-                - !Ref 'AWS::AccountId'
+  # d365IAMSQSPolicy2: 
+  #   Type: AWS::SQS::QueuePolicy
+  #   Properties: 
+  #     Queues: 
+  #       - !Ref d365DeadLetterQueue
+  #     PolicyDocument: 
+  #       Statement: 
+  #         - Effect: Allow
+  #           Action: 
+  #             - SQS:SendMessage
+  #             - SQS:ReceiveMessage
+  #           Resource: !GetAtt d365DeadLetterQueue.Arn
+  #           Principal:  
+  #             AWS:
+  #               - !Ref 'AWS::AccountId'
   
   ## KMS
   d365KMSKey:
@@ -157,7 +157,7 @@ Resources:
         # Lambda eni management access
         - arn:aws:iam::aws:policy/service-role/AWSLambdaENIManagementAccess
         # Lambda sqs queue access
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+        # - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
       Policies:
         - PolicyName: d365PolicyForLambdaRDSIAMConnection 
           PolicyDocument:
@@ -205,13 +205,13 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs
       Policies:
-        - PolicyName: d365PolicyForApiQueueConnection
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
-              - Effect: Allow
-                Action: sqs:SendMessage
-                Resource: !GetAtt d365SourceQueue.Arn
+        # - PolicyName: d365PolicyForApiQueueConnection
+        #   PolicyDocument:
+        #     Version: 2012-10-17
+        #     Statement:
+        #       - Effect: Allow
+        #         Action: sqs:SendMessage
+        #         Resource: !GetAtt d365SourceQueue.Arn
         - PolicyName: d365PolicyForApiLambdaInvocation
           PolicyDocument:
             Version: 2012-10-17
@@ -240,6 +240,18 @@ Resources:
           title: "d365TestApi"
           version: "2020-12-07 14:00:00UTC"
         paths:
+          /public:
+            get:
+              responses:
+                default:
+                  description: "Default response for GET /public"
+              x-amazon-apigateway-integration:
+                credentials: !GetAtt d365IAMApiGatewayRole.Arn
+                payloadFormatVersion: "2.0"
+                type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function0Alias1}/invocations'
+                connectionType: "INTERNET"
           /read:
             get:
               responses:
@@ -298,18 +310,12 @@ Resources:
               security:
               - d365LambdaAuthorizer1: []
               x-amazon-apigateway-integration:
-                integrationSubtype: "SQS-SendMessage"
                 credentials: !GetAtt d365IAMApiGatewayRole.Arn
-                requestParameters:
-                  # Messages that belong to the same message group are always processed one by one, in a strict order relative to the message group.
-                  MessageGroupId: "$request.body.MessageGroupId"
-                  # https://docs.aws.amazon.com/apigateway/latest/developerguide/http-api-develop-integrations-aws-services.html
-                  MessageBody: "$request.body"
-                  QueueUrl: !Ref d365SourceQueue
-                payloadFormatVersion: "1.0"
+                payloadFormatVersion: "2.0"
                 type: "aws_proxy"
+                httpMethod: "POST"
+                uri: !Sub 'arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${d365Function2Alias1}/invocations'
                 connectionType: "INTERNET"
-                timeoutInMillis: 30000
         components:
           securitySchemes:
             d365LambdaAuthorizer1:
@@ -341,14 +347,14 @@ Resources:
       StageName: !Ref d365ApiStage
 
   ## Lambda
-  # function1, read
-  d365Function1:
+  # function0, public
+  d365Function0:
     Type: AWS::Lambda::Function
     Properties:
       Handler: index.handler
       Code:
         S3Bucket: democracy365private
-        S3Key: d365_function1.zip
+        S3Key: d365_function0.zip
         # Keeping here for reference. Comment out two S3 lines above if using property below.
         # ZipFile: |
         #   exports.handler = async function(event){
@@ -406,6 +412,63 @@ Resources:
       Description: ONLY contains node-postgress (pg), for use in multiple functions
       LayerName: layer1
   
+  d365Function0Version1:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref d365Function0
+      Description: v1
+
+  d365Function0Alias1:
+    Type: AWS::Lambda::Alias
+    Properties:
+      FunctionName: !Ref d365Function0
+      FunctionVersion: !GetAtt d365Function0Version1.Version
+      Name: ALIAS1
+
+  # function1, read
+  d365Function1:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Code:
+        S3Bucket: democracy365private
+        S3Key: d365_function1.zip
+      Environment:
+        Variables:
+          REGION: us-east-1
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365DBEndpoint'
+          # This variable should be deleted or commented out once proxy goes live.
+          DB_PASSWORD:
+            !Join
+              - ''
+              - - '{{resolve:secretsmanager:'
+                - Fn::ImportValue:
+                    !Sub '${RDSStackNameParameter}-d365RDSSecret'
+                - ':SecretString:password}}'
+          PROXY_HOST:
+            Fn::ImportValue:
+              !Sub '${RDSStackNameParameter}-d365RDSProxy1Endpoint'
+          DB_PORT: '5432'
+          # Secrets stored in AWS Systems Manager Parameter Store.
+          DB_USER: "{{resolve:ssm:d365_db_user:1}}"
+          DB_NAME: "{{resolve:ssm:d365_db_name:1}}"
+      Layers:
+        - !Ref d365Layer1
+      Role: !GetAtt d365IAMLambdaRole.Arn
+      Runtime: nodejs12.x
+      VpcConfig: 
+        SecurityGroupIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365LambdaSecurityGroup'
+        SubnetIds: 
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet1'
+          - Fn::ImportValue:
+              !Sub '${VPCStackNameParameter}-d365PrivateSubnet2'
+  
   d365Function1Version1:
     Type: AWS::Lambda::Version
     Properties:
@@ -456,9 +519,6 @@ Resources:
       # AWS X-Ray tracing configuration.
       # TracingConfig:
       #   Mode: Active
-      # This DLQ config is for failed ASYNC invocations. In our setup, Lambda is polling our SQS queue and invoking our functions synchronously.
-      # DeadLetterConfig:
-      #   TargetArn: !GetAtt MyDeadLetterQueue.Arn
       VpcConfig: 
         SecurityGroupIds: 
           - Fn::ImportValue:
@@ -483,13 +543,13 @@ Resources:
       Name: ALIAS2
   
   # Make d365Function2 aware of events coming from our SQS queue.
-  d365EventSourceMapping: 
-    Type: AWS::Lambda::EventSourceMapping
-    Properties: 
-      # Min 1, Max 10 for SQS FIFO. Update this once lambda function can process events in batches.
-      BatchSize: '1'
-      EventSourceArn: !GetAtt d365SourceQueue.Arn
-      FunctionName: !Ref d365Function2Alias1
+  # d365EventSourceMapping: 
+  #   Type: AWS::Lambda::EventSourceMapping
+  #   Properties: 
+  #     # Min 1, Max 10 for SQS FIFO. Update this once lambda function can process events in batches.
+  #     BatchSize: '1'
+  #     EventSourceArn: !GetAtt d365SourceQueue.Arn
+  #     FunctionName: !Ref d365Function2Alias1
 
   # function3, lambda authorizer
   d365Function3:

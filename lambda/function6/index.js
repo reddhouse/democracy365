@@ -58,8 +58,7 @@ const sendEmail = (signinCode) => {
 }
 
 exports.handler = async (event) => {
-  const eventBody = JSON.parse(event.body)
-  let userId, signinCode, caughtError
+  let eventBody, queryString, queryParams, result, userId, signinCode, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -80,31 +79,40 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
-    // Query database.
+    eventBody = JSON.parse(event.body)
+    queryString = 'call sandbox.insert_new_user(_email_address := $1)'
+    queryParams = [eventBody.emailAddress]
 
     // Add email address to database. Postgres will throw an error if it's not unique.
-    await client.query(`call sandbox.insert_new_user(_email_address := '${eventBody.emailAddress}')`)
+    await client.query(queryString, queryParams)
 
-    // Go ahead and grab user_id and signin_code to send to new user. This bypasses step 1 of the normal sign-in flow, keeping time and emails to a minimum.
-    const result = await client.query(`select user_id, signin_code from sandbox.users where email_address = '${eventBody.emailAddress}'`)
-    userId = result.rows[0].user_id
-    signinCode = result.rows[0].signin_code
+    // Go ahead and grab user_id and signin_code to send to new user. This bypasses step 1 of the normal sign-in flow, keeping emails to a minimum.
+    queryString = 'select user_id, signin_code from sandbox.users where email_address = $1'
+    queryParams = [eventBody.emailAddress]
+    result = await client.query(queryString, queryParams)
+    if (result.rows.length == 0) {
+      throw (`[d365] Query to retrieve signin_code did not return any results for email address: ${queryParams[0]}`)
+    } else {
+      userId = result.rows[0].user_id
+      signinCode = result.rows[0].signin_code
+    }
 
     // Send email with signin code.
     await sendEmail(signinCode)
 
+    // Send back userId, as subsequent requests will use userId instead of email address to identify user.
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK",
+      "isBase64Encoded": false,
+      "headers": { "Content-Type": "text/html" },
+      "body": JSON.stringify({ "userId": userId })
+    }
+
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
-  }
-
-  // Send back userId, as subsequent requests will use userId instead of email address to identify user.
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify({ "userId": userId })
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {

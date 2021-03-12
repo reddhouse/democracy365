@@ -54,9 +54,7 @@ const sendEmail = (signinCode) => {
 }
 
 exports.handler = async (event) => {
-  const eventBody = JSON.parse(event.body)
-  const queryString = `select user_id, signin_code from sandbox.users where email_address = '${eventBody.emailAddress}'`
-  let userId, signinCode, caughtError
+  let queryString, queryParams, result, userId, signinCode, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -77,26 +75,34 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
+    queryString = 'select user_id, signin_code from sandbox.users where email_address = $1'
+    queryParams = [JSON.parse(event.body).emailAddress]
+
     // Query database.
-    const result = await client.query(queryString)
-    userId = result.rows[0].user_id
-    signinCode = result.rows[0].signin_code
+    result = await client.query(queryString, queryParams)
+    if (result.rows.length == 0) {
+      throw (`[d365] Query did not return any results for email address: ${queryParams[0]}`)
+    } else {
+      userId = result.rows[0].user_id
+      signinCode = result.rows[0].signin_code
+    }
 
     // Send email with signin code.
     await sendEmail(signinCode)
 
+    // Send back userId, as subsequent requests will use userId instead of email address to identify user.
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK",
+      "isBase64Encoded": false,
+      "headers": { "Content-Type": "text/html" },
+      "body": JSON.stringify({ "userId": userId })
+    }
+
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
-  }
-
-  // Send back userId, as subsequent requests will use userId instead of email address to identify user.
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify({ "userId": userId })
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {

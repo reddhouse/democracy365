@@ -28,9 +28,7 @@ const clientConfig = (rdsToken) => {
 }
 
 exports.handler = async (event) => {
-  //const eventBody = JSON.parse(event.body)
-  const queryString = 'select user_id, num_d365_tokens, signout_ts from sandbox.users where user_id=3'
-  let result, caughtError
+  let userId, queryString, queryParams, result, response, caughtError
 
   try {
     // Establish database connection with attempted reuse of execution context.
@@ -51,20 +49,32 @@ exports.handler = async (event) => {
       await client.connect()
     }
 
+    userId = event.requestContext.authorizer.lambda.userId
+
+    switch (event.queryStringParameters && event.queryStringParameters.procedureName) {
+      case 'TEST':
+        queryString = 'select user_id, num_d365_tokens, signout_ts from sandbox.users where user_id = $1'
+        queryParams = [event.queryStringParameters.testUser]
+        break;
+      default:
+        throw (`[d365] Query string parameters are missing, or do not contain known procedure`);
+    }
+
     // Query database.
-    result = await client.query(queryString)
+    result = await client.query(queryString, queryParams)
+
+    response = {
+      "statusCode": 200,
+      "statusDescription": "200 OK",
+      "isBase64Encoded": false,
+      "headers": { "Content-Type": "text/html" },
+      "body": JSON.stringify(result.rows)
+    }
 
   } catch (error) {
     caughtError = error
     console.log('BUMMER: ', error)
-  }
-
-  const response = {
-    "statusCode": 200,
-    "statusDescription": "200 OK",
-    "isBase64Encoded": false,
-    "headers": { "Content-Type": "text/html" },
-    "body": JSON.stringify(result.rows)
+    console.log('EVENT: ', JSON.stringify(event, null, 2))
   }
 
   return new Promise((resolve, reject) => {
